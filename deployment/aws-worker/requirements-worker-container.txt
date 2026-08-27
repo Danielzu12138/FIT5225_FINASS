@@ -1,0 +1,11 @@
+azure-cosmos==4.9.0
+azure-identity==1.25.0
+boto3==1.40.26
+megadetector==5.0.4
+onnx==1.16.2
+onnx2torch==1.5.15
+Pillow>=10,<13
+pydantic==2.10.6
+pydantic-settings==2.7.1
+PyJWT[crypto]==2.10.1
+setuptools<81
