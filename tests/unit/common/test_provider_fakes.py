@@ -57,6 +57,27 @@ def test_repository_reservation_is_idempotent_for_owner_and_checksum() -> None:
     assert second.media_id == first_id
 
 
+def test_repository_reclaims_reservation_after_materialized_media_is_deleted() -> None:
+    fakes = fakes_module()
+    repository = fakes.InMemoryMediaRepository()
+    first_id = UUID("11111111-1111-4111-8111-111111111111")
+    second_id = UUID("22222222-2222-4222-8222-222222222222")
+    checksum = "b" * 64
+
+    first = repository.reserve_upload("owner", checksum, first_id)
+    assert first.created is True
+    repository.upsert(
+        make_record(media_id=str(first_id), owner_sub="owner").model_copy(
+            update={"sha256": checksum}
+        )
+    )
+    assert repository.delete("owner", first_id) is True
+
+    replacement = repository.reserve_upload("owner", checksum, second_id)
+    assert replacement.created is True
+    assert replacement.media_id == second_id
+
+
 def test_fixed_clock_and_sequence_ids_are_deterministic() -> None:
     fakes = fakes_module()
     now = datetime(2026, 8, 22, 4, 0, tzinfo=UTC)

@@ -38,8 +38,8 @@ function authValue(): AuthContextValue {
 function client(overrides: Partial<ManagementClient> = {}): ManagementClient {
   return {
     queryByFile: vi.fn().mockResolvedValue([RESULT]),
-    updateTags: vi.fn().mockResolvedValue(undefined),
-    deleteMedia: vi.fn().mockResolvedValue(undefined),
+    updateTags: vi.fn().mockResolvedValue({ results: [{ url: RESULT.original_url, media_id: RESULT.media_id, status: "updated" }] }),
+    deleteMedia: vi.fn().mockResolvedValue({ results: [{ url: RESULT.original_url, media_id: RESULT.media_id, status: "deleted", error: null }] }),
     ...overrides,
   };
 }
@@ -116,6 +116,32 @@ describe("ManagementPanel", () => {
     expect(screen.getByText("night · manual")).toBeInTheDocument();
   });
 
+  it("applies tags only to updated outcomes and reports conflicts", async () => {
+    const second: ManagementResult = {
+      ...RESULT,
+      media_id: "33333333-3333-4333-8333-333333333333",
+      original_url: "https://downloads.example.test/originals/a/other.jpg",
+    };
+    const api = client({
+      queryByFile: vi.fn().mockResolvedValue([RESULT, second]),
+      updateTags: vi.fn().mockResolvedValue({
+        results: [
+          { url: RESULT.original_url, media_id: RESULT.media_id, status: "updated" },
+          { url: second.original_url, media_id: second.media_id, status: "conflict" },
+        ],
+      }),
+    });
+    await query(api);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select camera.jpg" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select other.jpg" }));
+    fireEvent.change(screen.getByLabelText("Tags"), { target: { value: "night" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add tags" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("conflict");
+    expect(screen.getByText("night · manual")).toBeInTheDocument();
+    expect(screen.getAllByText("dingo: 2")).toHaveLength(2);
+  });
+
   it("requires confirmation before deleting selected results", async () => {
     const api = client();
     await query(api);
@@ -130,5 +156,30 @@ describe("ManagementPanel", () => {
       expect(api.deleteMedia).toHaveBeenCalledWith([RESULT.original_url], "access-token"),
     );
     expect(screen.getByText("No matching media found.")).toBeInTheDocument();
+  });
+
+  it("retains bulk-delete failures and shows their real errors", async () => {
+    const second: ManagementResult = {
+      ...RESULT,
+      media_id: "33333333-3333-4333-8333-333333333333",
+      original_url: "https://downloads.example.test/originals/a/other.jpg",
+    };
+    const api = client({
+      queryByFile: vi.fn().mockResolvedValue([RESULT, second]),
+      deleteMedia: vi.fn().mockResolvedValue({
+        results: [
+          { url: RESULT.original_url, media_id: RESULT.media_id, status: "deleted", error: null },
+          { url: second.original_url, media_id: second.media_id, status: "failed", error: "storage timeout" },
+        ],
+      }),
+    });
+    await query(api);
+    fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete selected" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm delete" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("storage timeout");
+    expect(screen.queryByRole("checkbox", { name: "Select camera.jpg" })).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Select other.jpg" })).toBeInTheDocument();
   });
 });

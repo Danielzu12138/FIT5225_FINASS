@@ -253,6 +253,9 @@ button.secondary:hover:not(:disabled), .button-secondary:hover { background: var
 .media-video-thumbnail { object-fit: cover; }
 [role="dialog"] { position: fixed; inset: 50% auto auto 50%; z-index: 50; width: min(30rem, calc(100% - 2rem)); padding: 1.4rem; border: 1px solid var(--line); border-radius: var(--radius-lg); background: white; box-shadow: 0 2rem 6rem rgb(16 46 50 / 30%); transform: translate(-50%, -50%); }
 [role="dialog"]::before { position: fixed; inset: -100vh -100vw; z-index: -1; content: ""; background: rgb(7 28 29 / 55%); }
+.modal-backdrop { position: fixed; inset: 0; z-index: 49; display: grid; place-items: center; padding: 1rem; background: rgb(7 28 29 / 55%); }
+.modal-backdrop [role="dialog"] { position: relative; inset: auto; z-index: auto; width: min(30rem, 100%); transform: none; }
+.modal-backdrop [role="dialog"]::before { display: none; }
 
 .auth-page { min-height: 100vh; display: grid; place-items: center; padding: 2rem 1rem; }
 .auth-page-split { grid-template-columns: minmax(20rem, 0.9fr) minmax(24rem, 1.1fr); width: min(66rem, calc(100% - 2rem)); margin: 0 auto; padding-inline: 0; }

@@ -264,7 +264,7 @@ data "aws_iam_policy_document" "api_lambda" {
 
   statement {
     sid     = "MediaPrefixAccess"
-    actions = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+    actions = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:DeleteObjectVersion"]
     resources = [
       "${aws_s3_bucket.media.arn}/originals/*",
       "${aws_s3_bucket.media.arn}/derived/*",
@@ -276,7 +276,7 @@ data "aws_iam_policy_document" "api_lambda" {
 
   statement {
     sid       = "ListMediaBucket"
-    actions   = ["s3:ListBucket"]
+    actions   = ["s3:ListBucket", "s3:ListBucketVersions"]
     resources = [aws_s3_bucket.media.arn]
   }
 
@@ -514,6 +514,7 @@ locals {
     "POST /media/tags",
     "GET /media",
     "DELETE /media",
+    "DELETE /media/{media_id}",
     "GET /subscriptions",
     "POST /subscriptions",
     "PUT /subscriptions/{subscription_id}",

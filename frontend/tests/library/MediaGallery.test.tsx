@@ -47,10 +47,11 @@ test("renders image thumbnail links and video poster cards from signed media res
       },
     ],
   });
+  const deleteMediaById = vi.fn();
 
   render(
     <AuthContext.Provider value={authenticated}>
-      <MediaGallery client={{ list }} />
+      <MediaGallery client={{ list, deleteMediaById }} />
     </AuthContext.Provider>,
   );
 
@@ -82,4 +83,88 @@ test("renders image thumbnail links and video poster cards from signed media res
   await waitFor(() => expect(list).toHaveBeenCalledTimes(2));
   expect(screen.queryByRole("link", { name: "Open image original processing-1" })).not.toBeInTheDocument();
   expect(list).toHaveBeenLastCalledWith("access-token");
+});
+
+test("confirms card deletion and keeps a failed item with the API error", async () => {
+  const failed = {
+    media_id: "failed-1",
+    media_type: "image" as const,
+    status: "failed" as const,
+    original_url: null,
+    thumbnail_url: null,
+    tag_counts: {},
+  };
+  const list = vi.fn().mockResolvedValue({ results: [failed] });
+  const deleteMediaById = vi.fn().mockResolvedValue({
+    result: { media_id: failed.media_id, status: "failed", error: "processing record is locked" },
+  });
+
+  render(
+    <AuthContext.Provider value={authenticated}>
+      <MediaGallery client={{ list, deleteMediaById }} />
+    </AuthContext.Provider>,
+  );
+
+  await screen.findByText("Failed");
+  fireEvent.click(screen.getByRole("button", { name: "Delete image" }));
+  expect(screen.getByRole("dialog", { name: "Confirm deletion" })).toBeInTheDocument();
+  expect(deleteMediaById).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Confirm delete" }));
+
+  await waitFor(() => expect(deleteMediaById).toHaveBeenCalledWith("failed-1", "access-token"));
+  expect(await screen.findByRole("alert")).toHaveTextContent("processing record is locked");
+  expect(screen.getByText("Failed")).toBeInTheDocument();
+});
+
+test("removes a card only after the single-delete outcome is deleted", async () => {
+  const media = {
+    media_id: "ready-1",
+    media_type: "image" as const,
+    status: "ready" as const,
+    original_url: "https://downloads.example.test/ready.jpg",
+    thumbnail_url: null,
+    tag_counts: {},
+  };
+  const list = vi.fn().mockResolvedValue({ results: [media] });
+  const deleteMediaById = vi.fn().mockResolvedValue({
+    result: { media_id: media.media_id, status: "deleted", error: null },
+  });
+
+  render(
+    <AuthContext.Provider value={authenticated}>
+      <MediaGallery client={{ list, deleteMediaById }} />
+    </AuthContext.Provider>,
+  );
+  await screen.findByText("Ready");
+  fireEvent.click(screen.getByRole("button", { name: "Delete image" }));
+  fireEvent.click(screen.getByRole("button", { name: "Confirm delete" }));
+
+  await waitFor(() => expect(screen.queryByText("Ready")).not.toBeInTheDocument());
+  expect(screen.getByRole("status")).toHaveTextContent("Media deleted.");
+});
+
+test("closes the confirmation dialog when single deletion fails", async () => {
+  const media = {
+    media_id: "network-failure-1",
+    media_type: "image" as const,
+    status: "ready" as const,
+    original_url: null,
+    thumbnail_url: null,
+    tag_counts: {},
+  };
+  const list = vi.fn().mockResolvedValue({ results: [media] });
+  const deleteMediaById = vi.fn().mockRejectedValue(new Error("network unavailable"));
+
+  render(
+    <AuthContext.Provider value={authenticated}>
+      <MediaGallery client={{ list, deleteMediaById }} />
+    </AuthContext.Provider>,
+  );
+  await screen.findByText("Ready");
+  fireEvent.click(screen.getByRole("button", { name: "Delete image" }));
+  fireEvent.click(screen.getByRole("button", { name: "Confirm delete" }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("network unavailable");
+  expect(screen.queryByRole("dialog", { name: "Confirm deletion" })).not.toBeInTheDocument();
+  expect(screen.getByText("Ready")).toBeInTheDocument();
 });

@@ -9,7 +9,7 @@ from uuid import UUID
 from backend.common.contracts.models import MediaPreparedEvent
 from backend.common.providers.interfaces import Clock, EventPublisher, IdGenerator, ObjectStorage
 
-from .processing import VideoProcessor
+from .processing import VideoProcessingError, VideoProcessor
 
 
 VideoStatus = Literal["reserved", "uploaded", "processing", "prepared", "failed"]
@@ -155,7 +155,23 @@ class VideoEventHandler:
             self._publisher.publish(prepared.model_dump(mode="json"))
             self._reservations.mark_prepared(reservation.media_id, thumbnail_uri, frame_uris)
             return "processed"
+        except VideoProcessingError as error:
+            # Processing errors are expected failures from the media/backend
+            # boundary.  Only errors that indicate a temporarily unavailable
+            # processing dependency should be retried by the queue.  Invalid
+            # media and extraction/format failures are terminal for this
+            # upload, so persist the failure while retaining the claim.
+            if error.code in {"VIDEO_PROCESSING_TIMEOUT", "VIDEO_BACKEND_UNAVAILABLE"}:
+                self._reservations.release_claim(reservation.media_id, event_token)
+                raise
+            self._reservations.mark_failed(reservation.media_id, error.code, str(error))
+            return "failed"
         except (TimeoutError, ConnectionError, OSError):
+            self._reservations.release_claim(reservation.media_id, event_token)
+            raise
+        except Exception:
+            # Preserve unexpected programming errors while making the event
+            # eligible for a genuine queue retry instead of a duplicate.
             self._reservations.release_claim(reservation.media_id, event_token)
             raise
 

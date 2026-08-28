@@ -6,7 +6,7 @@ from backend.common.providers.interfaces import ObjectStorage
 
 
 class S3Storage(ObjectStorage):
-    """Small boto3-backed ObjectStorage adapter used by the API Lambda."""
+    """Boto3-backed storage adapter with permanent version-aware deletion."""
 
     def __init__(self, client: Any, bucket: str) -> None:
         self._client = client
@@ -27,11 +27,65 @@ class S3Storage(ObjectStorage):
         ]
 
     def delete_keys(self, keys: list[str]) -> None:
-        if keys:
-            self._client.delete_objects(
+        # DeleteObjects without VersionId only creates delete markers in a
+        # versioned bucket. Remove current keys first, then enumerate every
+        # version and the newly-created markers for permanent removal.
+        unique_keys = list(dict.fromkeys(keys))
+        if not unique_keys:
+            return
+        for start in range(0, len(unique_keys), 1000):
+            batch = unique_keys[start : start + 1000]
+            # This removes an unversioned object and, in a versioned bucket,
+            # creates a marker.  Listing afterwards deliberately captures
+            # that marker as well as every historical version.  It also means
+            # keys that never existed do not leave a marker behind.
+            self._delete_objects([{"Key": key} for key in batch])
+        self._delete_objects(self._versions_for_keys(unique_keys))
+
+    def _versions_for_keys(self, keys: list[str]) -> list[dict[str, str]]:
+        # Videos can have thousands of frame keys. Group by parent prefix so
+        # they need a few paginated listings instead of one request per frame.
+        groups: dict[str, set[str]] = {}
+        for key in keys:
+            parent, separator, _ = key.rpartition("/")
+            prefix = f"{parent}/" if separator else key
+            groups.setdefault(prefix, set()).add(key)
+
+        try:
+            paginator = self._client.get_paginator("list_object_versions")
+            entries: list[dict[str, str]] = []
+            for prefix, target_keys in groups.items():
+                for page in paginator.paginate(Bucket=self._bucket, Prefix=prefix):
+                    for name in ("Versions", "DeleteMarkers"):
+                        for item in page.get(name, []):
+                            key = item.get("Key")
+                            version_id = item.get("VersionId")
+                            if key in target_keys and version_id is not None:
+                                entries.append({"Key": str(key), "VersionId": str(version_id)})
+            return entries
+        except Exception as error:
+            # Some S3-compatible/unversioned implementations reject the
+            # versions API entirely; regular DeleteObjects still works there.
+            response = getattr(error, "response", None)
+            code = response.get("Error", {}).get("Code") if isinstance(response, dict) else None
+            if code in {"InvalidRequest", "NotImplemented", "MethodNotAllowed"} or isinstance(
+                error, (AttributeError, NotImplementedError)
+            ):
+                return []
+            raise
+
+    def _delete_objects(self, objects: list[dict[str, str]]) -> None:
+        for start in range(0, len(objects), 1000):
+            batch = objects[start : start + 1000]
+            if not batch:
+                continue
+            response = self._client.delete_objects(
                 Bucket=self._bucket,
-                Delete={"Objects": [{"Key": key} for key in keys]},
+                Delete={"Objects": batch},
             )
+            errors = response.get("Errors", []) if response else []
+            if errors:
+                raise RuntimeError(f"S3 object deletion failed: {errors!r}")
 
     def exists(self, key: str) -> bool:
         try:

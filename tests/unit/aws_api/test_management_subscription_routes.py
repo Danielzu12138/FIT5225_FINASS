@@ -121,6 +121,7 @@ def test_subscription_routes_provide_authenticated_list_update_delete_and_typed_
 
     assert client.get("/subscriptions").status_code == 401
     assert client.get("/subscriptions", headers=headers).json() == {"results": []}
+
     assert client.put(
         f"/subscriptions/{SUBSCRIPTION_ID}",
         json={"email": "missing@example.test", "tags": ["dingo"], "expected_version": 1},
@@ -145,3 +146,16 @@ def test_subscription_routes_provide_authenticated_list_update_delete_and_typed_
     assert updated.json()["version"] == 2
     assert client.delete(f"/subscriptions/{subscription_id}", headers=headers).status_code == 204
     assert client.get("/subscriptions", headers=headers).json() == {"results": []}
+
+
+def test_owner_scoped_media_delete_by_id_returns_single_result_contract() -> None:
+    client, _ = client_with_feature_routes()
+    headers = {"Authorization": "Bearer valid-token"}
+
+    response = client.delete(f"/media/{MEDIA_ID}", headers=headers)
+
+    assert response.status_code == 200
+    result = response.json()["result"]
+    assert result["status"] == "deleted"
+    assert result["media_id"] == str(MEDIA_ID)
+    assert "error" in result
