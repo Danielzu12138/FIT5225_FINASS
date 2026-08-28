@@ -22,17 +22,38 @@ class InMemoryPagedMediaRepository:
         self._page_size = page_size
         self._reservations: dict[tuple[str, str], UUID] = {}
         self._records: dict[tuple[str, UUID], MediaRecord] = {}
+        self._materialized_reservations: dict[tuple[str, str], UUID] = {}
 
     def reserve_upload(self, owner_sub: str, sha256: str, media_id: UUID) -> ReservationResult:
         key = (owner_sub, sha256)
         existing = self._reservations.get(key)
+        if (
+            existing is not None
+            and (owner_sub, existing) not in self._records
+            and self._materialized_reservations.get(key) == existing
+        ):
+            self._reservations.pop(key, None)
+            self._materialized_reservations.pop(key, None)
+            existing = None
         if existing is not None:
             return ReservationResult(created=False, media_id=existing)
+        self._materialized_reservations.pop(key, None)
         self._reservations[key] = media_id
         return ReservationResult(created=True, media_id=media_id)
 
+    def release_upload_reservation(
+        self, owner_sub: str, sha256: str, media_id: UUID | None = None
+    ) -> bool:
+        key = (owner_sub, sha256)
+        existing = self._reservations.get(key)
+        if existing is None or (media_id is not None and existing != media_id):
+            return False
+        del self._reservations[key]
+        return True
+
     def upsert(self, record: MediaRecord) -> None:
         self._records[(record.owner_sub, record.media_id)] = record
+        self._materialized_reservations[(record.owner_sub, record.sha256)] = record.media_id
 
     def get(self, owner_sub: str, media_id: UUID) -> MediaRecord | None:
         return self._records.get((owner_sub, media_id))
@@ -105,7 +126,13 @@ class InMemoryPagedMediaRepository:
         )
 
     def delete(self, owner_sub: str, media_id: UUID) -> bool:
-        return self._records.pop((owner_sub, media_id), None) is not None
+        record = self._records.pop((owner_sub, media_id), None)
+        if record is None:
+            return False
+        self.release_upload_reservation(owner_sub, record.sha256, media_id)
+        if self._materialized_reservations.get((owner_sub, record.sha256)) == media_id:
+            self._materialized_reservations.pop((owner_sub, record.sha256), None)
+        return True
 
     def _owned(self, owner_sub: str) -> list[MediaRecord]:
         return sorted(

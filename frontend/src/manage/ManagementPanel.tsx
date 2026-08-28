@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { useAuth } from "../auth/AuthContext";
+import type { BulkDeleteResponse, TagUpdateResponse } from "../api/mediaTypes";
 
 
 export interface ManagementResult {
@@ -14,13 +15,27 @@ export interface ManagementResult {
 
 export interface ManagementClient {
   queryByFile(file: File, accessToken: string): Promise<ManagementResult[]>;
-  updateTags(urls: string[], tags: string[], operation: 0 | 1, accessToken: string): Promise<void>;
-  deleteMedia(urls: string[], accessToken: string): Promise<void>;
+  updateTags(urls: string[], tags: string[], operation: 0 | 1, accessToken: string): Promise<TagUpdateResponse>;
+  deleteMedia(urls: string[], accessToken: string): Promise<BulkDeleteResponse>;
 }
 
 function resultName(result: ManagementResult): string {
   const path = new URL(result.original_url).pathname;
   return decodeURIComponent(path.split("/").at(-1) || result.media_id);
+}
+
+function outcomeFor<T extends { media_id: string | null; url?: string }>(
+  result: ManagementResult,
+  outcomes: T[],
+): T | undefined {
+  return outcomes.find((outcome) => outcome.media_id === result.media_id)
+    ?? outcomes.find((outcome) => outcome.url === result.original_url);
+}
+
+function statusSummary(statuses: string[]): string {
+  const counts = new Map<string, number>();
+  statuses.forEach((status) => counts.set(status, (counts.get(status) ?? 0) + 1));
+  return [...counts.entries()].map(([status, count]) => `${count} ${status.replaceAll("_", " ")}`).join(", ");
 }
 
 
@@ -73,6 +88,7 @@ export function ManagementPanel({ client }: { client: ManagementClient }) {
     const normalized = [...new Set(
       tags.split(",").map((tag) => tag.trim().toLowerCase()).filter(Boolean),
     )];
+    setMessage(null);
     if (normalized.length === 0) {
       setError("Enter at least one tag.");
       return;
@@ -80,14 +96,30 @@ export function ManagementPanel({ client }: { client: ManagementClient }) {
     setBusy(true);
     setError(null);
     try {
-      await client.updateTags(selectedUrls, normalized, operation, accessToken);
+      const response = await client.updateTags(selectedUrls, normalized, operation, accessToken);
+      const successfulIds = new Set(
+        results
+          .filter((result) => selected.has(result.media_id))
+          .filter((result) => outcomeFor(result, response.results)?.status === "updated")
+          .map((result) => result.media_id),
+      );
       setResults((current) => current.map((result) => {
-        if (!selected.has(result.media_id)) return result;
+        if (!successfulIds.has(result.media_id)) return result;
         const existing = new Set(result.manual_tags ?? []);
         normalized.forEach((tag) => operation === 1 ? existing.add(tag) : existing.delete(tag));
         return { ...result, manual_tags: [...existing].sort() };
       }));
-      setMessage("Tags updated.");
+      const selectedResults = results.filter((result) => selected.has(result.media_id));
+      const failed = selectedResults
+        .map((result) => outcomeFor(result, response.results))
+        .filter((outcome) => !outcome || (outcome.status !== "updated" && outcome.status !== "unchanged"));
+      const succeeded = selectedResults.length - failed.length;
+      if (succeeded > 0) setMessage(`Tags updated. ${succeeded} item(s) succeeded.`);
+      else setMessage(null);
+      if (failed.length > 0) {
+        const statuses = failed.map((outcome) => outcome?.status ?? "missing result");
+        setError(`Tags were not updated for ${failed.length} item(s): ${statusSummary(statuses)}.`);
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "The tag update failed");
     } finally {
@@ -99,12 +131,27 @@ export function ManagementPanel({ client }: { client: ManagementClient }) {
     if (!accessToken || selectedUrls.length === 0) return;
     setBusy(true);
     setError(null);
+    setMessage(null);
     try {
-      await client.deleteMedia(selectedUrls, accessToken);
-      setResults((current) => current.filter((result) => !selected.has(result.media_id)));
-      setSelected(new Set());
+      const response = await client.deleteMedia(selectedUrls, accessToken);
+      const selectedResults = results.filter((result) => selected.has(result.media_id));
+      const deletedIds = new Set(
+        selectedResults
+          .filter((result) => outcomeFor(result, response.results)?.status === "deleted")
+          .map((result) => result.media_id),
+      );
+      setResults((current) => current.filter((result) => !deletedIds.has(result.media_id)));
+      setSelected((current) => new Set([...current].filter((mediaId) => !deletedIds.has(mediaId))));
       setConfirmingDelete(false);
-      setMessage("Media deleted.");
+      const failed = selectedResults
+        .map((result) => outcomeFor(result, response.results))
+        .filter((outcome) => !outcome || outcome.status !== "deleted");
+      if (deletedIds.size > 0) setMessage(`${deletedIds.size} item(s) deleted.`);
+      else setMessage(null);
+      if (failed.length > 0) {
+        const details = failed.map((outcome) => outcome?.error || outcome?.status || "missing result");
+        setError(`Could not delete ${failed.length} item(s): ${details.join("; ")}`);
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "The deletion failed");
     } finally {

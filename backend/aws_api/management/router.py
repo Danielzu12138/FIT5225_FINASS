@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from uuid import UUID
 
 from fastapi import APIRouter, Depends
 
@@ -43,6 +44,20 @@ def create_management_router(dependencies: FeatureDependencies) -> APIRouter:
         except ValueError as error:
             raise ApiError("MEDIA_DELETE_REQUEST_INVALID", str(error), 422) from error
         return {"results": [_delete_outcome(outcome) for outcome in outcomes]}
+
+    @router.delete("/media/{media_id}")
+    def delete_media_by_id(
+        media_id: UUID,
+        auth: AuthContext = Depends(require_auth),
+    ) -> dict[str, dict[str, Any]]:
+        try:
+            outcome = dependencies.deletion.delete_by_id(
+                owner_sub=auth.sub,
+                media_id=media_id,
+            )
+        except ValueError as error:
+            raise ApiError("MEDIA_DELETE_REQUEST_INVALID", str(error), 422) from error
+        return {"result": _delete_outcome(outcome)}
 
     return router
 

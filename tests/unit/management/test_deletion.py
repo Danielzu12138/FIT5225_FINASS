@@ -164,6 +164,53 @@ def test_database_failure_keeps_recoverable_operation_and_retry_finishes() -> No
     assert repository.get("owner", MEDIA_ID) is None
 
 
+def test_delete_by_id_recovers_after_media_delete_before_reservation_release() -> None:
+    class FailOnceReservationReleaseRepository(InMemoryMediaRepository):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fail_release = True
+
+        def delete(self, owner_sub: str, media_id: UUID) -> bool:
+            # Keep the reservation behind after the media document is gone so
+            # the service's explicit release phase is exercised independently.
+            record = self._records.pop((owner_sub, media_id), None)
+            if record is None:
+                return False
+            if self._materialized_reservations.get((owner_sub, record.sha256)) == media_id:
+                self._materialized_reservations.pop((owner_sub, record.sha256), None)
+            return True
+
+        def release_upload_reservation(
+            self, owner_sub: str, sha256: str, media_id: UUID | None = None
+        ) -> bool:
+            if self.fail_release:
+                self.fail_release = False
+                raise OSError("temporary reservation release failure")
+            return super().release_upload_reservation(owner_sub, sha256, media_id)
+
+    repository = FailOnceReservationReleaseRepository()
+    repository.reserve_upload("owner", SHA, MEDIA_ID)
+    repository.upsert(make_record())
+    storage = InMemoryObjectStorage()
+    keys = populate(storage)
+    service = make_service(repository, storage)
+
+    first = service.delete(owner_sub="owner", urls=[URL])[0]
+    second = service.delete_by_id(owner_sub="owner", media_id=MEDIA_ID)
+    replacement_id = UUID("55555555-5555-4555-8555-555555555555")
+    replacement = repository.reserve_upload("owner", SHA, replacement_id)
+
+    assert first.status == "failed"
+    assert first.operation_id == OPERATION_ID
+    assert repository.get("owner", MEDIA_ID) is None
+    assert second.status == "deleted"
+    assert second.media_id == MEDIA_ID
+    assert second.operation_id == OPERATION_ID
+    assert all(storage.exists(key) is False for key in keys)
+    assert replacement.created is True
+    assert replacement.media_id == replacement_id
+
+
 def test_storage_failure_leaves_deleting_record_and_retry_is_safe() -> None:
     class FailOnceStorage(InMemoryObjectStorage):
         def __init__(self) -> None:
@@ -189,3 +236,21 @@ def test_storage_failure_leaves_deleting_record_and_retry_is_safe() -> None:
     assert first.status == "failed"
     assert marked is not None and marked.status == "deleting"
     assert second.status == "deleted"
+
+
+def test_delete_by_id_removes_failed_record_and_legacy_quarantine_key() -> None:
+    repository = InMemoryMediaRepository()
+    failed = make_record().model_copy(update={"status": "failed", "media_type": "image"})
+    repository.upsert(failed)
+    storage = InMemoryObjectStorage()
+    quarantine_key = f"quarantine/{SHA}/camera.jpg"
+    storage.put_bytes(quarantine_key, b"bad", content_type="image/jpeg")
+
+    outcome = make_service(repository, storage).delete_by_id(
+        owner_sub="owner", media_id=MEDIA_ID
+    )
+
+    assert outcome.status == "deleted"
+    assert outcome.media_id == MEDIA_ID
+    assert repository.get("owner", MEDIA_ID) is None
+    assert not storage.exists(quarantine_key)

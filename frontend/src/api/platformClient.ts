@@ -3,6 +3,20 @@ import type { QueryClient, QueryMode, QueryResponse } from "../query/QueryPanel"
 import type { SubscriptionClient, SubscriptionView } from "../subscriptions/SubscriptionPanel";
 import type { MediaResult } from "../library/MediaGallery";
 import type {
+  BulkDeleteResponse,
+  SingleDeleteResponse,
+  TagUpdateResponse,
+} from "./mediaTypes";
+export type {
+  BulkDeleteResponse,
+  MediaDeleteOutcome,
+  MediaDeleteStatus,
+  SingleDeleteResponse,
+  TagUpdateOutcome,
+  TagUpdateResponse,
+  TagUpdateStatus,
+} from "./mediaTypes";
+import type {
   UploadReservationRequest,
   UploadReservationResponse,
 } from "../upload/UploadPanel";
@@ -55,12 +69,21 @@ export class PlatformClient implements QueryClient, ManagementClient, Subscripti
     return this.request("/media", accessToken, { method: "GET" });
   }
 
-  updateTags(urls: string[], tags: string[], operation: 0 | 1, accessToken: string): Promise<void> {
+  updateTags(urls: string[], tags: string[], operation: 0 | 1, accessToken: string): Promise<TagUpdateResponse> {
     return this.json("/media/tags", accessToken, "POST", { urls, tags, operation });
   }
 
-  deleteMedia(urls: string[], accessToken: string): Promise<void> {
-    return this.json("/media", accessToken, "DELETE", { urls });
+  deleteMedia(urls: string[], accessToken: string): Promise<BulkDeleteResponse>;
+  deleteMedia(mediaId: string, accessToken: string): Promise<SingleDeleteResponse>;
+  deleteMedia(mediaIdOrUrls: string | string[], accessToken: string): Promise<BulkDeleteResponse | SingleDeleteResponse> {
+    if (Array.isArray(mediaIdOrUrls)) {
+      return this.json("/media", accessToken, "DELETE", { urls: mediaIdOrUrls });
+    }
+    return this.request(`/media/${encodeURIComponent(mediaIdOrUrls)}`, accessToken, { method: "DELETE" });
+  }
+
+  deleteMediaById(mediaId: string, accessToken: string): Promise<SingleDeleteResponse> {
+    return this.deleteMedia(mediaId, accessToken);
   }
 
   getProfile(accessToken: string): Promise<UserProfile> {

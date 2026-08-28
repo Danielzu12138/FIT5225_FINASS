@@ -74,8 +74,18 @@ describe("PlatformClient", () => {
     vi.stubGlobal("fetch", fetchMock);
     const client = new PlatformClient("https://api.example.test");
 
-    await client.updateTags([result.original_url], ["dingo"], 1, "access-token");
-    await client.deleteMedia([result.original_url], "access-token");
+    const tagResponse = { results: [{ url: result.original_url, media_id: result.media_id, status: "updated" }] };
+    const deleteResponse = { results: [{ url: result.original_url, media_id: result.media_id, status: "deleted", error: null }] };
+    fetchMock.mockReset();
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(tagResponse))
+      .mockResolvedValueOnce(jsonResponse(deleteResponse))
+      .mockResolvedValueOnce(jsonResponse({ results: [] }))
+      .mockResolvedValueOnce(jsonResponse(subscription, 201))
+      .mockResolvedValueOnce(jsonResponse({ ...subscription, version: 2 }))
+      .mockResolvedValueOnce(jsonResponse({}));
+    await expect(client.updateTags([result.original_url], ["dingo"], 1, "access-token")).resolves.toEqual(tagResponse);
+    await expect(client.deleteMedia([result.original_url], "access-token")).resolves.toEqual(deleteResponse);
     await client.list("access-token");
     await client.create(subscription.email, subscription.tags, "access-token");
     await client.update(subscription.subscription_id, subscription.email, subscription.tags, 1, "access-token");
@@ -92,6 +102,19 @@ describe("PlatformClient", () => {
     expect(fetchMock.mock.calls[4][1]).toMatchObject({
       method: "PUT",
       body: JSON.stringify({ email: subscription.email, tags: subscription.tags, expected_version: 1 }),
+    });
+  });
+
+  it("deletes one media record by id and preserves the wrapped outcome", async () => {
+    const response = { result: { media_id: result.media_id, status: "deleted", error: null } };
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(response));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(new PlatformClient("https://api.example.test").deleteMediaById(result.media_id, "access-token"))
+      .resolves.toEqual(response);
+    expect(fetchMock).toHaveBeenCalledWith(`https://api.example.test/media/${result.media_id}`, {
+      method: "DELETE",
+      headers: { Authorization: "Bearer access-token" },
     });
   });
 

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAuth } from "../auth/AuthContext";
+import type { SingleDeleteResponse } from "../api/mediaTypes";
 
 export interface MediaResult {
   media_id: string;
@@ -14,6 +15,7 @@ export interface MediaResult {
 
 export interface MediaLibraryClient {
   list(accessToken: string): Promise<{ results: MediaResult[] }>;
+  deleteMediaById(mediaId: string, accessToken: string): Promise<SingleDeleteResponse>;
 }
 
 type MediaFilter = "all" | "image" | "video";
@@ -33,17 +35,22 @@ export function MediaGallery({
   const [results, setResults] = useState<MediaResult[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [message, setMessage] = useState<string | null>(null);
   const [filter, setFilter] = useState<MediaFilter>("all");
+  const [deleting, setDeleting] = useState<MediaResult | null>(null);
   const pollTimer = useRef<number | undefined>(undefined);
 
   const loadMedia = useCallback(async () => {
     if (!auth.accessToken) {
       setResults(null);
       setLoading(false);
+      setError(null);
+      setMessage(null);
       return;
     }
     setLoading(true);
     setError(null);
+    setMessage(null);
     try {
       const response = await client.list(auth.accessToken);
       setResults(response.results);
@@ -81,6 +88,30 @@ export function MediaGallery({
   }), [results]);
   const filtered = results?.filter((item) => filter === "all" || item.media_type === filter) ?? [];
 
+  async function confirmDelete() {
+    if (!deleting || !auth.accessToken) return;
+    setLoading(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const response = await client.deleteMediaById(deleting.media_id, auth.accessToken);
+      const outcome = response.result;
+      if (outcome.status !== "deleted") {
+        setError(outcome.error || `Media could not be deleted (${outcome.status}).`);
+        setDeleting(null);
+        return;
+      }
+      setResults((current) => current?.filter((item) => item.media_id !== deleting.media_id) ?? current);
+      setMessage("Media deleted.");
+      setDeleting(null);
+    } catch (caught) {
+      setDeleting(null);
+      setError(caught instanceof Error ? caught.message : "The media could not be deleted.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <section aria-labelledby="media-gallery-heading">
       <div className="panel-heading panel-heading-row">
@@ -93,6 +124,7 @@ export function MediaGallery({
       <p className="panel-description">Review processing progress, open originals and browse the species evidence found in each file.</p>
       {loading && <p role="status">Loading media…</p>}
       {error && <p role="alert">{error}</p>}
+      {message && <p role="status">{message}</p>}
       {!loading && results?.length === 0 && <p className="empty-state">Your media library is empty. Upload a field observation to begin.</p>}
       {results && results.length > 0 && (
         <>
@@ -137,12 +169,31 @@ export function MediaGallery({
                         {(media.manual_tags ?? []).map((tag) => <span className="tag-chip tag-chip-manual" key={`manual-${tag}`}>{`${tag} · manual`}</span>)}
                       </div>
                     ) : <span className="tag-empty">No tags yet</span>}
+                    <button
+                      type="button"
+                      className="button-danger"
+                      disabled={loading}
+                      onClick={() => setDeleting(media)}
+                    >
+                      {`Delete ${media.media_type}`}
+                    </button>
                   </div>
                 </li>
               ))}
             </ul>
           )}
         </>
+      )}
+      {deleting && (
+        <div className="modal-backdrop">
+          <div className="dialog" role="dialog" aria-label="Confirm deletion" aria-modal="true">
+            <p>Delete this {deleting.media_type} from your library? This cannot be undone.</p>
+            <div className="dialog-actions">
+              <button className="secondary" type="button" disabled={loading} onClick={() => setDeleting(null)}>Cancel</button>
+              <button className="button-danger" type="button" disabled={loading} onClick={() => void confirmDelete()}>Confirm delete</button>
+            </div>
+          </div>
+        </div>
       )}
     </section>
   );

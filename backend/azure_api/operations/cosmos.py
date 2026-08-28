@@ -60,6 +60,37 @@ class CosmosDeletionOperationStore:
             storage_uri=str(item["storage_uri"]),
             media_id=UUID(str(item["media_id"])),
             object_keys=[str(key) for key in item.get("object_keys", [])],
+            sha256=str(item.get("sha256", "")),
+            status=str(item.get("status", "marked")),
+            error=item.get("error"),
+        )
+
+    def get_by_media_id(self, owner_sub: str, media_id: UUID):
+        from backend.aws_api.management.deletion import DeletionOperation
+
+        # Event-claim and media documents can carry the same media_id in this
+        # owner partition. Restrict recovery to durable deletion operations.
+        query = (
+            "SELECT * FROM c WHERE STARTSWITH(c.id, 'operation:') "
+            "AND c.media_id = @media_id"
+        )
+        items = list(
+            self._container.query_items(
+                query=query,
+                parameters=[{"name": "@media_id", "value": str(media_id)}],
+                partition_key=owner_sub,
+            )
+        )
+        if not items:
+            return None
+        item = items[0]
+        return DeletionOperation(
+            operation_id=UUID(str(item["operation_id"])),
+            owner_sub=str(item["owner_sub"]),
+            storage_uri=str(item["storage_uri"]),
+            media_id=UUID(str(item["media_id"])),
+            object_keys=[str(key) for key in item.get("object_keys", [])],
+            sha256=str(item.get("sha256", "")),
             status=str(item.get("status", "marked")),
             error=item.get("error"),
         )
@@ -72,6 +103,7 @@ class CosmosDeletionOperationStore:
             "storage_uri": operation.storage_uri,
             "media_id": str(operation.media_id),
             "object_keys": list(operation.object_keys),
+            "sha256": operation.sha256,
             "status": operation.status,
             "error": operation.error,
         })

@@ -53,6 +53,15 @@ class Backend:
         return self.session
 
 
+class FailingProcessor:
+    def __init__(self, error: BaseException) -> None:
+        self.error = error
+
+    def process(self, source: bytes):
+        assert source == b"tiny-deterministic-video"
+        raise self.error
+
+
 class ReservationStore:
     def __init__(self, reservation: object) -> None:
         self.reservation = reservation
@@ -291,6 +300,66 @@ def test_transient_storage_failure_releases_claim_for_event_retry() -> None:
     assert reservations.released_tokens == ["video-event-1:version-1"]
     assert handler.handle(event(original_key)) == ["processed"]
     assert len(publisher.events) == 1
+
+
+@pytest.mark.parametrize(
+    ("error_code", "should_retry"),
+    [
+        ("VIDEO_CORRUPT", False),
+        ("VIDEO_FRAME_EXTRACTION_FAILED", False),
+        ("VIDEO_PROCESSING_TIMEOUT", True),
+        ("VIDEO_BACKEND_UNAVAILABLE", True),
+    ],
+)
+def test_video_processing_errors_route_permanent_and_transient_failures(
+    error_code: str,
+    should_retry: bool,
+) -> None:
+    handler_module = importlib.import_module("backend.media_processor.videos.handler")
+    processing = importlib.import_module("backend.media_processor.videos.processing")
+    source = b"tiny-deterministic-video"
+    checksum = hashlib.sha256(source).hexdigest()
+    original_key = f"originals/{checksum}/processor-error.mp4"
+    reservation = handler_module.VideoReservation(
+        media_id=MEDIA_ID,
+        owner_sub="cognito-owner",
+        sha256=checksum,
+        media_type="video",
+        original_storage_uri=f"s3://pba-media/{original_key}",
+        status="reserved",
+    )
+    reservations = ReservationStore(reservation)
+    storage = InMemoryObjectStorage()
+    storage.put_bytes(original_key, source, content_type="video/mp4")
+    inspector = Inspector(
+        handler_module.ObjectHead(
+            content_type="video/mp4",
+            metadata={"sha256": checksum},
+            version_id="version-1",
+        )
+    )
+    error = processing.VideoProcessingError(error_code, f"processor failure: {error_code}")
+    handler = handler_module.VideoEventHandler(
+        bucket_name="pba-media",
+        storage=storage,
+        inspector=inspector,
+        reservations=reservations,
+        publisher=RecordingEventPublisher(),
+        processor=FailingProcessor(error),
+        clock=FixedClock(NOW),
+        ids=SequenceIdGenerator([]),
+        recompute_checksum=True,
+    )
+
+    if should_retry:
+        with pytest.raises(processing.VideoProcessingError, match=f"processor failure: {error_code}"):
+            handler.handle(event(original_key))
+        assert reservations.released_tokens == ["video-event-1:version-1"]
+    else:
+        assert handler.handle(event(original_key)) == ["failed"]
+        assert reservations.released_tokens == []
+        assert reservations.failures == [(error_code, f"processor failure: {error_code}")]
+        assert handler.handle(event(original_key)) == ["duplicate"]
 
 
 @pytest.mark.parametrize(

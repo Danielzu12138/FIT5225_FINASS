@@ -8,13 +8,19 @@ records.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
+
+from azure.core import MatchConditions
 
 from backend.common.contracts.models import MediaRecord
 from backend.common.providers.interfaces import ReservationResult
 
 from .repository import MediaPage
+
+
+ORPHAN_RESERVATION_GRACE_SECONDS = 60
 
 
 class CosmosPagedMediaRepository:
@@ -26,28 +32,98 @@ class CosmosPagedMediaRepository:
 
     def reserve_upload(self, owner_sub: str, sha256: str, media_id: UUID) -> ReservationResult:
         reservation_id = f"reservation:{sha256}"
+        # A reservation and its media item are separate Cosmos documents.  If
+        # the latter was deleted first, reclaim the orphan and retry the
+        # conditional create so a checksum is not blocked forever.
+        while True:
+            try:
+                item = self._container.read_item(item=reservation_id, partition_key=owner_sub)
+            except Exception as error:
+                if not _is_not_found(error):
+                    raise
+                try:
+                    self._container.create_item(
+                        {
+                            "id": reservation_id,
+                            "kind": "reservation",
+                            "owner_sub": owner_sub,
+                            "sha256": sha256,
+                            "media_id": str(media_id),
+                            "created_at": datetime.now(UTC).isoformat(),
+                        }
+                    )
+                except Exception as create_error:
+                    if getattr(create_error, "status_code", None) != 409:
+                        raise
+                    continue
+                return ReservationResult(created=True, media_id=media_id)
+
+            try:
+                reserved_media_id = UUID(str(item["media_id"]))
+            except (KeyError, TypeError, ValueError):
+                # Invalid legacy reservation data is just as unrecoverable as
+                # a missing media record; remove it and retry.
+                self._delete_reservation(
+                    owner_sub, reservation_id, etag=item.get("_etag")
+                )
+                continue
+            if self.get(owner_sub, reserved_media_id) is not None:
+                return ReservationResult(created=False, media_id=reserved_media_id)
+            if not _reservation_is_stale(item):
+                # Leave a just-created reservation in place while its media
+                # document is being materialized by the original request.
+                return ReservationResult(
+                    created=False,
+                    media_id=reserved_media_id,
+                )
+            self._delete_reservation(
+                owner_sub, reservation_id, etag=item.get("_etag")
+            )
+
+    def release_upload_reservation(
+        self, owner_sub: str, sha256: str, media_id: UUID | None = None
+    ) -> bool:
+        reservation_id = f"reservation:{sha256}"
         try:
             item = self._container.read_item(item=reservation_id, partition_key=owner_sub)
         except Exception as error:
-            if not _is_not_found(error):
-                raise
+            if _is_not_found(error):
+                return False
+            raise
+        if media_id is not None:
             try:
-                self._container.create_item(
-                    {
-                        "id": reservation_id,
-                        "kind": "reservation",
-                        "owner_sub": owner_sub,
-                        "sha256": sha256,
-                        "media_id": str(media_id),
-                    }
-                )
-            except Exception as create_error:
-                if getattr(create_error, "status_code", None) != 409:
-                    raise
-                item = self._container.read_item(item=reservation_id, partition_key=owner_sub)
-                return ReservationResult(created=False, media_id=UUID(item["media_id"]))
-            return ReservationResult(created=True, media_id=media_id)
-        return ReservationResult(created=False, media_id=UUID(item["media_id"]))
+                if UUID(str(item.get("media_id"))) != media_id:
+                    return False
+            except (TypeError, ValueError):
+                return False
+        return self._delete_reservation(
+            owner_sub, reservation_id, etag=item.get("_etag")
+        )
+
+    def _delete_reservation(
+        self,
+        owner_sub: str,
+        reservation_id: str,
+        *,
+        etag: str | None = None,
+    ) -> bool:
+        options: dict[str, Any] = {}
+        if etag:
+            options.update(etag=etag, match_condition=MatchConditions.IfNotModified)
+        try:
+            self._container.delete_item(
+                item=reservation_id,
+                partition_key=owner_sub,
+                **options,
+            )
+        except Exception as error:
+            if _is_not_found(error):
+                return False
+            if getattr(error, "status_code", None) == 412:
+                # A newer reservation replaced the item after it was read.
+                return False
+            raise
+        return True
 
     def upsert(self, record: MediaRecord) -> None:
         payload = record.model_dump(mode="json")
@@ -157,12 +233,15 @@ class CosmosPagedMediaRepository:
         return self._collect(lambda token: self.query_by_species_page(owner_sub, species, continuation_token=token))
 
     def delete(self, owner_sub: str, media_id: UUID) -> bool:
+        record = self.get(owner_sub, media_id)
         try:
             self._container.delete_item(item=str(media_id), partition_key=owner_sub)
         except Exception as error:
             if _is_not_found(error):
                 return False
             raise
+        if record is not None:
+            self.release_upload_reservation(owner_sub, record.sha256, media_id)
         return True
 
     def _query_owner(self, owner_sub: str) -> list[MediaRecord]:
@@ -204,3 +283,17 @@ def _meets_counts(record: MediaRecord, required: dict[str, int]) -> bool:
 
 def _is_not_found(error: Exception) -> bool:
     return getattr(error, "status_code", None) == 404
+
+
+def _reservation_is_stale(item: dict[str, Any]) -> bool:
+    raw_created = item.get("created_at")
+    if not raw_created:
+        # Legacy reservation documents predate the grace-period marker.
+        return True
+    try:
+        created = datetime.fromisoformat(str(raw_created).replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=UTC)
+    return (datetime.now(UTC) - created).total_seconds() >= ORPHAN_RESERVATION_GRACE_SECONDS

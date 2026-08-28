@@ -180,6 +180,24 @@ paths:
               schema: {$ref: "./schemas/delete-response.schema.json"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "422": {$ref: "#/components/responses/ValidationError"}
+  /media/{media_id}:
+    delete:
+      tags: [management]
+      operationId: deleteMediaById
+      security: [{CognitoBearer: []}]
+      parameters:
+        - name: media_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Owner-scoped deletion outcome.
+          content:
+            application/json:
+              schema: {$ref: "./schemas/delete-single-response.schema.json"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "422": {$ref: "#/components/responses/ValidationError"}
   /subscriptions:
     get:
       tags: [notifications]
