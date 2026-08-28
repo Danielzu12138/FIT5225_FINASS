@@ -37,131 +37,110 @@
 
 队友可以使用自己的 AWS IAM 身份和 Azure 登录账号访问同一个开发环境。需要发布 Lambda、ECR 镜像或 Azure Function 时，账号必须具有相应的发布权限。
 
-## 3. 本地依赖
+## 3. 本地依赖与统一解释器规则
 
-需要安装：
+Windows 和 macOS 都必须先激活一个 Python `3.12` 环境，再运行项目命令。脚本只使用当前 `PATH` 中的 `python`，不会创建环境，也不会绑定 Conda 环境名或本机绝对路径。Windows 当前可使用团队已有的 Conda 环境；macOS 可使用 Conda 或自行创建的虚拟环境。
 
-- Python `3.12`
-- Node.js `20` 或更高版本
-- npm
-- AWS CLI
-- Azure CLI
-- PowerShell 7 (`pwsh`)
-- Azure Functions Core Tools 4 (`func`)
-- Docker Desktop（只有重新构建 Worker 镜像时需要）
-- `jq`（命令行检查 JSON 时需要）
+还需安装 Node.js/npm、Terraform、Docker Desktop、AWS CLI、Azure CLI 和 Azure Functions Core Tools 4。激活 Python 环境后，从项目根目录统一检查：
 
-检查安装情况：
-
-```bash
-python3.12 --version
-node --version
-npm --version
-aws --version
-az version
-pwsh --version
-func --version
-docker --version
-jq --version
+```text
+python scripts/check-environment.py
 ```
 
-## 4. 获取源码并安装依赖
+检查器会打印实际 `sys.executable`、Python 版本、每个工具的路径和版本，并检查 Docker daemon。任何 `MISSING` 或 `FAIL` 都应先解决。
 
-如果从 GitHub 获取：
+## 4. 初始化依赖
 
-```bash
-git clone https://github.com/makaakam/pacific-bioarchive-team-dev.git
-cd pacific-bioarchive-team-dev
+### 4.1 Windows PowerShell
+
+```powershell
+conda activate 5225A2
+python scripts/check-environment.py
+.\scripts\bootstrap.ps1
 ```
 
-如果使用压缩包，先解压，然后进入项目根目录：
+### 4.2 macOS
+
+可激活已有 Conda 环境，或创建任意名称的 Python 3.12 虚拟环境：
 
 ```bash
-cd /绝对路径/pacific-bioarchive-team-dev
+python3.12 -m venv <environment-directory>
+source <environment-directory>/bin/activate
+python scripts/check-environment.py
+bash scripts/bootstrap.sh
 ```
 
-创建 Python 虚拟环境并安装开发依赖：
-
-```bash
-python3.12 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e '.[dev]'
-python -m pip install -r requirements-azure-functions.txt
-```
-
-安装前端依赖：
-
-```bash
-cd frontend
-npm ci
-cd ..
-```
+`bootstrap` 使用当前 Python 安装后端开发依赖和 Azure Function 依赖，并在 `frontend` 中执行 `npm ci`。
 
 ## 5. 配置前端
 
-前端只连接 AWS API Gateway，不直接连接 Azure Function。创建 `frontend/.env.local`：
+前端只连接 AWS API Gateway，不直接连接 Azure Function。在 `frontend/.env.local` 中写入：
 
-```bash
-printf '%s\n' \\
-  'VITE_API_BASE_URL=https://j85cs8gf3d.execute-api.ap-southeast-2.amazonaws.com' \\
-  > frontend/.env.local
+```dotenv
+VITE_API_BASE_URL=https://j85cs8gf3d.execute-api.ap-southeast-2.amazonaws.com
 ```
 
-该文件已被 Git 忽略，不要提交。
+该文件已被 Git 忽略，不要提交。不要把 OAuth client secret 或访问令牌写入任何前端环境变量。
 
 ## 6. 登录云平台
 
-队友使用自己的 AWS 身份登录同一个 AWS Account：
+仅运行本地 UI 时不要求云 CLI 登录；查看日志或发布时必须登录。以下命令都应在已激活的 Python 环境所在终端执行。
 
-```bash
-aws configure --profile pba-team
-export AWS_PROFILE=pba-team
-export AWS_REGION=ap-southeast-2
+### 6.1 Windows PowerShell
+
+```powershell
+$env:AWS_PROFILE = "pba-team"
+$env:AWS_REGION = "ap-southeast-2"
+aws sso login --profile pba-team
 aws sts get-caller-identity
-```
 
-输出中的 Account 应为 `983367475562`。
-
-登录 Azure：
-
-```bash
 az login
 az account set --subscription 6932a700-63c2-4df8-8964-c5e0e2b906e2
-az account show -o table
+az account show --output table
 ```
 
-如果只是运行前端，AWS/Azure CLI 登录不是必需的；如果要查看日志或发布代码，则必需。
+如果团队身份不是 SSO profile，先按管理员提供的方式执行 `aws configure --profile pba-team`。AWS 输出 Account 应为 `983367475562`。
 
-## 7. 启动前端
-
-必须使用端口 `5173`，因为 Cognito 已配置以下回调地址：
-
-```text
-http://localhost:5173/auth/callback
-http://localhost:5173
-```
-
-启动：
+### 6.2 macOS
 
 ```bash
-cd frontend
-npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
+export AWS_PROFILE=pba-team
+export AWS_REGION=ap-southeast-2
+aws sso login --profile pba-team
+aws sts get-caller-identity
+
+az login
+az account set --subscription 6932a700-63c2-4df8-8964-c5e0e2b906e2
+az account show --output table
 ```
 
-浏览器打开：
+## 7. 启动和端口检查
 
-```text
-http://localhost:5173/login
+本地完整应用固定使用后端 `8000` 和前端 `5173`。Cognito 回调依赖 `http://localhost:5173`，不要让 Vite 自动切换到 `5174`。
+
+Windows：
+
+```powershell
+Get-NetTCPConnection -LocalPort 5173,8000 -State Listen -ErrorAction SilentlyContinue
+.\scripts\start-local.ps1
 ```
 
-不要直接使用 Vite 自动分配的 `5174`。如果 `5173` 被占用：
+如端口被旧进程占用，先查看 PID，再明确停止目标进程：
+
+```powershell
+Get-NetTCPConnection -LocalPort 5173 -State Listen | Select-Object LocalPort,OwningProcess
+Stop-Process -Id <PID>
+```
+
+macOS：
 
 ```bash
 lsof -nP -iTCP:5173 -sTCP:LISTEN
-kill <PID>
-npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
+lsof -nP -iTCP:8000 -sTCP:LISTEN
+bash scripts/start-local.sh
 ```
+
+确认 PID 后可用 `kill <PID>` 结束旧进程。启动后打开 `http://localhost:5173/login`；按 Ctrl+C 会同时结束由脚本启动的前后端进程。
 
 ## 8. 页面功能测试
 
@@ -229,90 +208,116 @@ npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
 
 当前订阅页面已支持订阅记录的创建、读取、编辑和删除，SNS 邮箱确认和标签匹配通知链路已经实现。测试完成后移除测试标签并删除测试订阅。
 
-## 9. 发布应用代码后的操作
+## 9. 测试、构建与发布
 
-### 9.1 只修改前端
+以下流程不运行 Terraform。云资源已存在，但 Terraform backend/state 归属尚未确认，因此禁止直接执行 `terraform plan` 或 `terraform apply`；先由团队确认 backend，并把现存资源 import 到正确 state。
 
-修改 `frontend/src` 后重新运行：
+### 9.1 标准测试与静态验证
 
-```bash
-cd frontend
-npm test -- --run
-npm run build
-npm run dev -- --port 5173
+Windows：
+
+```powershell
+.\scripts\test-backend.ps1
+.\scripts\test-contracts.ps1
+.\scripts\test-frontend.ps1
+.\scripts\validate-infra.ps1
 ```
 
-前端代码不需要发布到 AWS，因为当前是本地 Vite 页面。
-
-### 9.2 修改 AWS API
-
-修改 `backend/aws_api` 或其依赖后：
+macOS：
 
 ```bash
-cd /项目根目录
-source .venv/bin/activate
-./scripts/build-aws-api-package.sh
+bash scripts/test-backend.sh
+bash scripts/test-contracts.sh
+bash scripts/test-frontend.sh
+bash scripts/validate-infra.sh
+```
 
+`validate-infra` 会生成 Linux/Python 3.12 Lambda ZIP、运行 Terraform contract tests、执行 `fmt -check`、`init -backend=false -lockfile=readonly` 和 `validate`。它不会执行 `plan` 或 `apply`。
+
+### 9.2 只修改前端
+
+使用上面的 `test-frontend` 脚本完成 test/build，再用 `start-local` 启动。当前前端是本地 Vite 页面，不发布到 AWS。
+
+### 9.3 修改 AWS API
+
+Lambda 当前为 `x86_64`。共享构建任务始终下载 `manylinux2014_x86_64`、CPython 3.12 wheels，不能把 Windows/macOS native site-packages 直接压入 ZIP。
+
+Windows：
+
+```powershell
+.\scripts\build-aws-api-package.ps1
+aws lambda update-function-code --function-name pacific-bioarchive-development-api --zip-file fileb://build/aws-api.zip
+aws lambda wait function-updated --function-name pacific-bioarchive-development-api
+```
+
+macOS：
+
+```bash
+bash scripts/build-aws-api-package.sh
 aws lambda update-function-code \\
   --function-name pacific-bioarchive-development-api \\
   --zip-file fileb://build/aws-api.zip
-
 aws lambda wait function-updated \\
   --function-name pacific-bioarchive-development-api
 ```
 
-### 9.3 修改 Azure Function
+### 9.4 修改 Azure Function
 
-修改 `backend/azure_api`、Cosmos repository 或 Azure 查询逻辑后：
+Windows：
+
+```powershell
+func azure functionapp publish pacific-bioarchive-development-data-pba826 --python
+```
+
+macOS：
 
 ```bash
-cd /项目根目录
-source .venv/bin/activate
 func azure functionapp publish \\
   pacific-bioarchive-development-data-pba826 \\
   --python
 ```
 
-例如，手动 tag 参与 `Tag counts` 查询的逻辑就在 Azure media repository 中；修改后必须重新发布 Azure Function。
+### 9.5 修改 Worker 或 ML 模型
 
-### 9.4 修改 Worker 或 ML 模型
+Worker 需要 `mdv5a.pt`、`model.pt` 和 `labels.txt`。默认目录是项目根目录的 `models/`；也可传入其他目录。构建固定使用 `linux/amd64`，与 x86_64 Lambda 一致并兼容 Apple Silicon Mac。
 
-Worker 镜像需要以下模型文件：
+Windows：
 
-```text
-mdv5a.pt
-model.pt
-labels.txt
+```powershell
+.\scripts\build-push-aws-worker-image.ps1 `
+  -RepositoryUri 983367475562.dkr.ecr.ap-southeast-2.amazonaws.com/pacific-bioarchive-development-media-worker `
+  -Tag ml-v2 `
+  -ModelDirectory <model-directory>
 ```
 
-登录 ECR：
+macOS：
 
 ```bash
-aws ecr get-login-password --region ap-southeast-2 |
-docker login \\
-  --username AWS \\
-  --password-stdin \\
-  983367475562.dkr.ecr.ap-southeast-2.amazonaws.com
+bash scripts/build-push-aws-worker-image.sh \\
+  983367475562.dkr.ecr.ap-southeast-2.amazonaws.com/pacific-bioarchive-development-media-worker \\
+  --tag ml-v2 \\
+  --model-directory <model-directory>
 ```
 
-构建并推送镜像：
+脚本自行验证 AWS account、登录 ECR、推送镜像，并输出不可变的 `repository@sha256:digest`。然后更新 Worker：
 
-```bash
-pwsh ./scripts/build-push-aws-worker-image.ps1 \\
-  -RepositoryUri 983367475562.dkr.ecr.ap-southeast-2.amazonaws.com/pacific-bioarchive-development-media-worker \\
-  -Tag ml-v2 \\
-  -ModelDirectory /绝对路径/PacificBioArchive
+```powershell
+aws lambda update-function-code --function-name pacific-bioarchive-development-media-worker --image-uri '<repository@sha256:digest>'
+aws lambda wait function-updated --function-name pacific-bioarchive-development-media-worker
 ```
 
-脚本会输出不可变的 `repository@sha256:digest`。将该完整 URI 用于更新 Worker：
+macOS 可使用同一 AWS CLI 命令并用反斜线换行。
+
+### 9.6 更新 Terraform provider lockfile
+
+只有 provider 版本约束改变时才运行。脚本同时记录 Windows x86_64、Intel Mac、Apple Silicon Mac 和 Linux x86_64 校验值：
+
+```powershell
+.\scripts\lock-terraform-providers.ps1
+```
 
 ```bash
-aws lambda update-function-code \\
-  --function-name pacific-bioarchive-development-media-worker \\
-  --image-uri '完整的repository@sha256:digest'
-
-aws lambda wait function-updated \\
-  --function-name pacific-bioarchive-development-media-worker
+bash scripts/lock-terraform-providers.sh
 ```
 
 ## 10. 云端健康检查

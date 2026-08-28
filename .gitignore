@@ -1,4 +1,5 @@
 .env
+.env.local
 .venv/
 __pycache__/
 *.py[cod]
@@ -14,6 +15,8 @@ frontend/.env.local
 .terraform-build/
 build/
 terraform.tfvars
+*.tfvars
+*.tfvars.json
 *.auto.tfvars
 *.tfstate
 *.tfstate.*

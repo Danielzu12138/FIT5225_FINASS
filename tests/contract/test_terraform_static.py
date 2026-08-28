@@ -71,7 +71,7 @@ def test_every_terraform_file_parses_as_hcl() -> None:
 def test_aws_api_package_uses_the_real_asgi_entrypoint_and_exposes_required_outputs() -> None:
     stack = read_stack("aws")
     outputs = (ROOT / "infra" / "aws" / "outputs.tf").read_text(encoding="utf-8")
-    build_script = (ROOT / "scripts" / "build-aws-api-package.ps1").read_text(encoding="utf-8")
+    build_script = (ROOT / "scripts" / "project_tasks.py").read_text(encoding="utf-8")
 
     assert "lambda_stub" not in stack
     assert 'handler          = "lambda_adapter.handler"' in stack
@@ -140,17 +140,18 @@ def test_obsolete_lambda_stub_is_rejected() -> None:
 
 
 def test_infrastructure_validation_builds_the_api_package_before_static_or_terraform_checks() -> None:
-    validator = (ROOT / "scripts" / "validate-infra.ps1").read_text(encoding="utf-8")
+    tasks = (ROOT / "scripts" / "project_tasks.py").read_text(encoding="utf-8")
+    validator = tasks.split("def validate_infra", 1)[1].split("def lock_terraform_providers", 1)[0]
 
-    assert "build-aws-api-package.ps1" in validator
-    assert validator.index("build-aws-api-package.ps1") < validator.index("test_terraform_static.py")
+    assert "build_aws_api_package()" in validator
+    assert validator.index("build_aws_api_package()") < validator.index("test_terraform_static.py")
 
 
 def test_aws_api_package_build_targets_lambda_linux_python() -> None:
-    build_script = (ROOT / "scripts" / "build-aws-api-package.ps1").read_text(encoding="utf-8")
+    build_script = (ROOT / "scripts" / "project_tasks.py").read_text(encoding="utf-8")
 
-    assert "--platform manylinux2014_x86_64" in build_script
-    assert "--python-version 312" in build_script
+    assert 'LAMBDA_WHEEL_PLATFORM = "manylinux2014_x86_64"' in build_script
+    assert 'LAMBDA_PYTHON_VERSION = "312"' in build_script
     assert "--only-binary=:all:" in build_script
     assert "--ignore-installed" in build_script
 
