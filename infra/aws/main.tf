@@ -259,6 +259,7 @@ data "aws_iam_policy_document" "api_lambda" {
       "${aws_s3_bucket.media.arn}/originals/*",
       "${aws_s3_bucket.media.arn}/derived/*",
       "${aws_s3_bucket.media.arn}/quarantine/*",
+      "${aws_s3_bucket.media.arn}/temporary-query/*",
     ]
   }
 
@@ -491,6 +492,7 @@ data "aws_iam_policy_document" "media_worker" {
       "${aws_s3_bucket.media.arn}/originals/*",
       "${aws_s3_bucket.media.arn}/derived/*",
       "${aws_s3_bucket.media.arn}/quarantine/*",
+      "${aws_s3_bucket.media.arn}/temporary-query/*",
     ]
   }
   statement {

@@ -127,6 +127,9 @@ class RecordingEventPublisher:
 
 def _meets_minimum_counts(record: MediaRecord, required: dict[str, int]) -> bool:
     available = {tag.casefold(): count for tag, count in record.tag_counts.items()}
+    # Manual tags are presence-only, so they contribute one match.
+    for tag in record.manual_tags:
+        available.setdefault(tag.casefold(), 1)
     return all(available.get(tag, 0) >= count for tag, count in required.items())
 
 

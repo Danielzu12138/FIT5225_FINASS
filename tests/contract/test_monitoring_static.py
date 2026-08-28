@@ -83,17 +83,17 @@ def test_deployment_verifier_is_explicit_and_secret_safe() -> None:
     assert not re.search(r"Write-(Host|Output).*ACCESS_TOKEN", script, re.IGNORECASE)
 
 
-def test_repository_contains_no_markdown_except_readme() -> None:
+def test_repository_contains_only_approved_markdown_documents() -> None:
     markdown_files = sorted(
         path.relative_to(ROOT).as_posix()
         for path in ROOT.rglob("*.md")
         if not any(
-            part in {".git", ".pytest_cache", ".terraform", ".venv", "node_modules"}
+            part in {".git", ".pytest_cache", ".terraform", ".venv", "build", "node_modules"}
             for part in path.parts
         )
     )
 
-    assert markdown_files == ["README.md"]
+    assert markdown_files == ["README.md", "TEAM_FRONTEND_RUNBOOK.md"]
 
 
 def test_deployment_verifier_preserves_human_evidence_boundaries() -> None:

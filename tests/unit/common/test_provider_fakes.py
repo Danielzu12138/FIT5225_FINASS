@@ -95,6 +95,8 @@ def test_repository_queries_and_deletes_owner_scoped_records() -> None:
 
     assert repository.query_by_tags("owner", {"dingo": 2}) == [owned]
     assert repository.query_by_tags("owner", {"dingo": 3}) == []
+    assert repository.query_by_tags("owner", {"night": 1}) == [owned]
+    assert repository.query_by_tags("owner", {"night": 2}) == []
     assert repository.query_by_species("owner", "night") == [owned]
     assert repository.find_by_storage_uri("owner", str(owned.thumbnail_storage_uri)) == owned
 

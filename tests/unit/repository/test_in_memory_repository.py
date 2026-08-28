@@ -55,6 +55,15 @@ def test_tag_query_matches_model_species_names_case_insensitively() -> None:
     assert repository.query_by_tags("owner-a", {"bos_taurus": 2}) == [matching]
 
 
+def test_tag_query_matches_manual_tags_as_single_occurrences() -> None:
+    repository = InMemoryPagedMediaRepository()
+    manual = record(1, manual=["Night"])
+    repository.upsert(manual)
+
+    assert repository.query_by_tags("owner-a", {"night": 1}) == [manual]
+    assert repository.query_by_tags("owner-a", {"night": 2}) == []
+
+
 def test_species_query_includes_automatic_and_manual_tags_case_insensitively() -> None:
     repository = InMemoryPagedMediaRepository()
     automatic = record(1, counts={"Dingo": 1})

@@ -109,6 +109,14 @@ def test_task5_protects_the_composed_media_list_route() -> None:
     assert '"GET /media"' in protected_routes.group(1)
 
 
+def test_temporary_query_objects_are_available_to_api_and_worker() -> None:
+    main = (ROOT / "infra" / "aws" / "main.tf").read_text(encoding="utf-8")
+
+    # The API stages the reference file and the worker reads it (and may write
+    # extracted video frames) before the temporary prefix is cleaned up.
+    assert main.count('"${aws_s3_bucket.media.arn}/temporary-query/*"') >= 2
+
+
 def test_obsolete_lambda_stub_is_rejected() -> None:
     assert not (ROOT / "infra" / "aws" / "lambda_stub").exists()
 
