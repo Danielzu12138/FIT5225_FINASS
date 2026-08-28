@@ -8,6 +8,10 @@ export interface AuthContextValue {
   status: AuthStatus;
   config: AuthConfig | null;
   accessToken: string | null;
+  /** Undefined is retained for lightweight component fixtures that do not use profile gating. */
+  profileComplete?: boolean | null;
+  profileError?: string | null;
+  refreshProfile?: () => Promise<void>;
   login(provider?: string): Promise<void>;
   signup(): Promise<void>;
   localLogin(): Promise<void>;
@@ -23,6 +27,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const [config, setConfig] = useState<AuthConfig | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [status, setStatus] = useState<AuthStatus>("loading");
+  const [profileComplete, setProfileComplete] = useState<boolean | null>(null);
+  const [profileError, setProfileError] = useState<string | null>(null);
 
   const client = useMemo(() => (config ? new BrowserAuthClient(config) : null), [config]);
 
@@ -48,10 +54,14 @@ export function AuthProvider({ children }: PropsWithChildren) {
       .restoreSession()
       .then((token) => {
         setAccessToken(token);
+        setProfileComplete(null);
+        setProfileError(null);
         setStatus(token ? "authenticated" : "anonymous");
       })
       .catch(() => {
         setAccessToken(null);
+        setProfileComplete(null);
+        setProfileError(null);
         setStatus("anonymous");
       });
   }, [client]);
@@ -61,6 +71,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
       status,
       config,
       accessToken,
+      profileComplete,
+      profileError,
       login: async (provider?: string) => {
         if (!client) throw new Error("Authentication is not configured");
         await client.beginLogin(provider);
@@ -77,21 +89,44 @@ export function AuthProvider({ children }: PropsWithChildren) {
         if (!payload.access_token || !payload.expires_in) throw new Error("Local token response is invalid");
         client.storeLocalAccessToken(payload.access_token, payload.expires_in);
         setAccessToken(payload.access_token);
+        setProfileComplete(null);
+        setProfileError(null);
         setStatus("authenticated");
       },
       completeCallback: async (search: string) => {
         if (!client) throw new Error("Authentication is not configured");
         const token = await client.completeCallback(search);
         setAccessToken(token);
+        setProfileComplete(null);
+        setProfileError(null);
         setStatus("authenticated");
+      },
+      refreshProfile: async () => {
+        if (!accessToken) throw new Error("Authentication is required");
+        try {
+          const response = await fetch(`${API_BASE_URL}/profile`, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          });
+          if (!response.ok) throw new Error(`Profile request failed (${response.status})`);
+          const payload = (await response.json()) as { complete?: unknown };
+          if (typeof payload.complete !== "boolean") throw new Error("Profile response is invalid");
+          setProfileComplete(payload.complete);
+          setProfileError(null);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Profile could not be loaded";
+          setProfileError(message);
+          throw error;
+        }
       },
       logout: () => {
         client?.logout();
         setAccessToken(null);
+        setProfileComplete(null);
+        setProfileError(null);
         setStatus("anonymous");
       },
     }),
-    [accessToken, client, config, status],
+    [accessToken, client, config, profileComplete, profileError, status],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

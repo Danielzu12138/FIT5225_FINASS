@@ -47,6 +47,13 @@ Function and update the AWS worker configuration.
    .\scripts\build-aws-worker-package.ps1
    ```
 
+   On macOS or Linux, use the native shell scripts:
+
+   ```bash
+   ./scripts/build-aws-api-package.sh
+   ./scripts/build-push-aws-worker-image.sh <ECR_REPOSITORY_URI>
+   ```
+
 3. Copy the examples to `terraform.tfvars` and fill in only your own region,
    Cognito domain prefix, Azure subscription, and unique suffix. Do not put
    OAuth secrets in these files; use `TF_VAR_google_client_secret` or

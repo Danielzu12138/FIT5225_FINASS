@@ -74,6 +74,7 @@ class QueryGateway:
             original_url=original_url,
             thumbnail_url=thumbnail_url,
             tag_counts=record.tag_counts,
+            manual_tags=record.manual_tags,
         )
 
     def _key(self, storage_uri: str) -> str:

@@ -169,6 +169,7 @@ class QueryResult(StrictModel):
     original_url: HttpUrl | None
     thumbnail_url: HttpUrl | None
     tag_counts: dict[SpeciesName, Annotated[int, Field(ge=1)]]
+    manual_tags: list[SpeciesName] = Field(default_factory=list)
 
 
 class QueryResponse(StrictModel):

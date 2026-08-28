@@ -195,6 +195,7 @@ button.secondary:hover:not(:disabled), .button-secondary:hover { background: var
 .media-card-title > span { color: var(--ink-soft); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 0.65rem; }
 .tag-list { display: flex; flex-wrap: wrap; gap: 0.35rem; }
 .tag-chip { padding: 0.25rem 0.5rem; border-radius: 99rem; color: #315a4c; background: var(--sage-light); font-size: 0.68rem; font-weight: 700; }
+.tag-chip-manual { color: #694c11; background: #fff1c7; border: 1px solid #dfc36f; }
 .tag-empty { color: var(--ink-soft); font-size: 0.72rem; font-style: italic; }
 
 .query-form { margin-top: 1.4rem; padding: 1rem; border: 1px solid var(--line); border-radius: var(--radius-md); background: #fbfcf8; }
@@ -287,6 +288,8 @@ button.secondary:hover:not(:disabled), .button-secondary:hover { background: var
 .auth-page-single { background: radial-gradient(circle at 50% 18%, rgb(21 95 75 / 13%), transparent 26rem); }
 .auth-state-card { justify-items: center; text-align: center; }
 .auth-state-card > p:not(.panel-kicker):not([role]) { color: var(--ink-soft); line-height: 1.6; }
+.profile-card { width: min(30rem, 100%); }
+.profile-card form { width: 100%; text-align: left; }
 .state-icon { display: grid; width: 4rem; height: 4rem; margin: 0.5rem 0; place-items: center; border-radius: 50%; color: var(--forest); background: var(--sage); font-size: 1.45rem; }
 .state-icon-loading { animation: spin 1.2s linear infinite; }
 .auth-link { display: inline-flex; align-items: center; justify-content: center; color: white; text-decoration: none; }

@@ -117,6 +117,24 @@ def test_temporary_query_objects_are_available_to_api_and_worker() -> None:
     assert main.count('"${aws_s3_bucket.media.arn}/temporary-query/*"') >= 2
 
 
+def test_sns_attribute_permissions_cover_topic_and_subscription_arns() -> None:
+    main = (ROOT / "infra" / "aws" / "main.tf").read_text(encoding="utf-8")
+    resource_sets = re.findall(
+        r'resources\s*=\s*\[\s*aws_sns_topic\.notifications\.arn,\s*'
+        r'"\$\{aws_sns_topic\.notifications\.arn\}:\*",\s*\]',
+        main,
+    )
+
+    assert len(resource_sets) >= 2
+
+
+def test_existing_cognito_pool_schema_is_not_modified() -> None:
+    main = (ROOT / "infra" / "aws" / "main.tf").read_text(encoding="utf-8")
+    user_pool = re.search(r'resource\s+"aws_cognito_user_pool"\s+"main"\s*\{(.*?)\n\}', main, re.DOTALL)
+    assert user_pool is not None
+    assert "ignore_changes = [schema]" in user_pool.group(1)
+
+
 def test_obsolete_lambda_stub_is_rejected() -> None:
     assert not (ROOT / "infra" / "aws" / "lambda_stub").exists()
 

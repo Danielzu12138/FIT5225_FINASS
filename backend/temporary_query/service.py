@@ -30,6 +30,7 @@ class TemporaryQueryService:
         "image/jpeg": ({".jpg", ".jpeg"}, (b"\xff\xd8\xff",)),
         "image/png": ({".png"}, (b"\x89PNG\r\n\x1a\n",)),
         "video/mp4": ({".mp4"}, (b"ftyp",)),
+        "video/quicktime": ({".mov"}, (b"ftyp",)),
     }
 
     def __init__(
@@ -126,7 +127,7 @@ class TemporaryQueryService:
             raise TemporaryFileValidationError("file extension does not match media type")
         signature_matches = (
             data[4:8] == signatures[0]
-            if content_type == "video/mp4"
+            if content_type in {"video/mp4", "video/quicktime"}
             else any(data.startswith(signature) for signature in signatures)
         )
         if not signature_matches:
@@ -155,6 +156,7 @@ class TemporaryQueryService:
                 else None
             ),
             tag_counts=record.tag_counts,
+            manual_tags=record.manual_tags,
         )
 
     def _object_key(self, storage_uri: str) -> str:

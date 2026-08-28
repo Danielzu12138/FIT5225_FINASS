@@ -193,7 +193,14 @@ def test_partial_storage_write_is_removed_when_put_raises() -> None:
     assert storage.exists(QUERY_KEY) is False
 
 
-def test_video_query_extracts_temporary_frames_and_cleans_all_objects() -> None:
+@pytest.mark.parametrize(
+    ("file_name", "content_type"),
+    [("query.mp4", "video/mp4"), ("query.mov", "video/quicktime")],
+)
+def test_video_query_extracts_temporary_frames_and_cleans_all_objects(
+    file_name: str,
+    content_type: str,
+) -> None:
     class VideoProcessor:
         def process(self, data: bytes) -> VideoProcessingResult:
             assert data[4:8] == b"ftyp"
@@ -221,8 +228,8 @@ def test_video_query_extracts_temporary_frames_and_cleans_all_objects() -> None:
     response = service.query(
         owner_sub="owner",
         request_id=REQUEST_ID,
-        file_name="query.mp4",
-        content_type="video/mp4",
+        file_name=file_name,
+        content_type=content_type,
             data=b"\x00\x00\x00\x18ftypvideo-bytes",
     )
 

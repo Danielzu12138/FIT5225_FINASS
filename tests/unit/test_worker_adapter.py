@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 
 import worker_adapter
+from backend.common.contracts.models import TaggingCompletedEvent
+from datetime import UTC, datetime
+from uuid import UUID
 
 
 class SecretClient:
@@ -65,3 +68,33 @@ def test_model_check_forces_runtime_loading(monkeypatch) -> None:
 
     assert response == {"status": "ok", "model": "loaded"}
     assert inference.loaded is True
+
+
+def test_worker_event_publisher_routes_completion_to_eventbridge() -> None:
+    class Sqs:
+        def send_message(self, **kwargs: object) -> None:
+            raise AssertionError(f"unexpected SQS call: {kwargs}")
+
+    class Events:
+        def __init__(self) -> None:
+            self.entries: list[dict[str, object]] = []
+
+        def put_events(self, *, Entries: list[dict[str, object]]) -> dict[str, object]:
+            self.entries = Entries
+            return {"FailedEntryCount": 0}
+
+    events = Events()
+    publisher = worker_adapter.WorkerEventPublisher(Sqs(), "queue", events, "application-events")
+    publisher.publish(TaggingCompletedEvent(
+        schema_version="1.0",
+        event_id=UUID("11111111-1111-4111-8111-111111111111"),
+        media_id=UUID("22222222-2222-4222-8222-222222222222"),
+        owner_sub="owner",
+        tag_counts={"dingo": 1},
+        model_version="test",
+        occurred_at=datetime(2026, 8, 28, tzinfo=UTC),
+    ))
+
+    assert events.entries[0]["EventBusName"] == "application-events"
+    assert events.entries[0]["DetailType"] == "TaggingCompleted"
+    assert json.loads(str(events.entries[0]["Detail"]))["owner_sub"] == "owner"

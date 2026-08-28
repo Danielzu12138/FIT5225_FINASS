@@ -9,6 +9,7 @@ export interface MediaResult {
   original_url: string | null;
   thumbnail_url: string | null;
   tag_counts: Record<string, number>;
+  manual_tags?: string[];
 }
 
 export interface MediaLibraryClient {
@@ -130,9 +131,10 @@ export function MediaGallery({
                       <strong>{media.media_type === "image" ? "Field image" : "Field video"}</strong>
                       <span>{media.media_id.slice(0, 8)}</span>
                     </div>
-                    {Object.keys(media.tag_counts).length > 0 ? (
+                    {Object.keys(media.tag_counts).length > 0 || (media.manual_tags ?? []).length > 0 ? (
                       <div className="tag-list" aria-label="Detected tags">
-                        {Object.entries(media.tag_counts).map(([tag, count]) => <span className="tag-chip" key={tag}>{`${tag} × ${count}`}</span>)}
+                        {Object.entries(media.tag_counts).map(([tag, count]) => <span className="tag-chip" key={`detected-${tag}`}>{`${tag} × ${count}`}</span>)}
+                        {(media.manual_tags ?? []).map((tag) => <span className="tag-chip tag-chip-manual" key={`manual-${tag}`}>{`${tag} · manual`}</span>)}
                       </div>
                     ) : <span className="tag-empty">No tags yet</span>}
                   </div>

@@ -28,6 +28,21 @@ class RecordingSnsClient:
         self.calls.append(kwargs)
         return {"MessageId": "message-1"}
 
+    def subscribe(self, **kwargs: object) -> dict[str, object]:
+        return {"SubscriptionArn": f"{TOPIC_ARN}:subscription-1"}
+
+    def get_subscription_attributes(self, **kwargs: object) -> dict[str, object]:
+        return {"Attributes": {"SubscriptionArn": kwargs["SubscriptionArn"]}}
+
+    def set_subscription_attributes(self, **kwargs: object) -> object:
+        return {}
+
+    def list_subscriptions_by_topic(self, **kwargs: object) -> dict[str, object]:
+        return {"Subscriptions": []}
+
+    def unsubscribe(self, **kwargs: object) -> object:
+        return {}
+
 
 def settings(topic: str | None = TOPIC_ARN) -> AppSettings:
     return AppSettings(app_env="development", notification_topic=topic, _env_file=None)

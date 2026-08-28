@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping, Protocol
+from typing import Callable, Mapping, Protocol
 from urllib.parse import urlencode
 from uuid import UUID
 
-from backend.azure_api.subscriptions.repository import SubscriptionRepository
+from backend.azure_api.subscriptions.repository import Subscription, SubscriptionRepository
 from backend.common.contracts.models import TaggingCompletedEvent
 from backend.common.providers.interfaces import Notifier
 
@@ -53,13 +53,15 @@ class NotificationEvaluator:
         notifier: Notifier,
         ledger: DeliveryLedger,
         app_base_url: str,
+        subscription_is_active: Callable[[Subscription], bool] | None = None,
     ) -> None:
-        if not app_base_url.startswith("https://"):
-            raise ValueError("app_base_url must use HTTPS")
+        if not (app_base_url.startswith("https://") or app_base_url.startswith("http://localhost")):
+            raise ValueError("app_base_url must use HTTPS outside localhost")
         self._repository = repository
         self._notifier = notifier
         self._ledger = ledger
         self._app_base_url = app_base_url.rstrip("/")
+        self._subscription_is_active = subscription_is_active
 
     def evaluate(
         self,
@@ -68,7 +70,10 @@ class NotificationEvaluator:
         data = self._event_data(event)
         outcomes: list[DeliveryOutcome] = []
         for subscription in self._repository.list_for_owner(data.owner_sub):
-            if subscription.status != "active":
+            if self._subscription_is_active is not None:
+                if not self._subscription_is_active(subscription):
+                    continue
+            elif subscription.status != "active":
                 continue
             matched = sorted(set(subscription.tags) & set(data.tags))
             if not matched:

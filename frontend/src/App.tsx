@@ -5,6 +5,7 @@ import { ProtectedRoute } from "./auth/ProtectedRoute";
 import { CallbackPage } from "./pages/CallbackPage";
 import { LibraryPage } from "./pages/LibraryPage";
 import { LoginPage } from "./pages/LoginPage";
+import { ProfilePage } from "./pages/ProfilePage";
 import { VerificationPage } from "./pages/VerificationPage";
 
 export function App() {
@@ -15,6 +16,9 @@ export function App() {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/auth/callback" element={<CallbackPage />} />
           <Route path="/verify" element={<VerificationPage />} />
+          <Route element={<ProtectedRoute requireProfile={false} />}>
+            <Route path="/profile" element={<ProfilePage />} />
+          </Route>
           <Route element={<ProtectedRoute />}>
             <Route path="/library" element={<LibraryPage />} />
           </Route>

@@ -20,4 +20,8 @@ def require_auth(
         raise ApiError("AUTH_HEADER_INVALID", "Authorization header must use Bearer authentication", 401)
 
     verifier: TokenVerifier = request.app.state.auth_verifier
-    return verifier.verify(token.strip())
+    access_token = token.strip()
+    auth = verifier.verify(access_token)
+    # Downstream user-scoped Cognito APIs require the original access token.
+    request.state.access_token = access_token
+    return auth

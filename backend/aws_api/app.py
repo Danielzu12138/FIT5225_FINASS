@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 
 from backend.aws_api.dependencies import FeatureDependencies, build_feature_dependencies, build_sns_feature_dependencies
 from backend.aws_api.management.router import create_management_router
+from backend.aws_api.profile.router import InMemoryProfileClient, S3ProfileClient, create_profile_router
 from backend.aws_api.media import MediaLibraryService
 from backend.aws_api.media.local_objects import LocalObjectUrlSigner, create_local_object_router
 from backend.aws_api.media.local_processing import LocalMediaProcessingService
@@ -169,6 +170,7 @@ class ApplicationDependencies:
     query_dependencies: QueryDependencies
     feature_dependencies: FeatureDependencies
     local_object_router: APIRouter
+    profile_client: object
 
 
 def build_local_dependencies(settings: AppSettings, verifier: TokenVerifier) -> ApplicationDependencies:
@@ -267,6 +269,7 @@ def build_local_dependencies(settings: AppSettings, verifier: TokenVerifier) -> 
         query_dependencies=create_query_dependencies(gateway=gateway, temporary_service=temporary_service),
         feature_dependencies=features,
         local_object_router=create_local_object_router(storage, signer, processing),
+        profile_client=InMemoryProfileClient(),
     )
 
 
@@ -332,7 +335,7 @@ def build_runtime_dependencies(settings: AppSettings, verifier: TokenVerifier) -
         ids=ids,
         download_base_url=f"https://{bucket}.s3.{settings.aws_region}.amazonaws.com",
         bucket_name=bucket,
-        application_base_url=str(settings.api_base_url).rstrip("/"),
+        application_base_url=os.environ.get("FRONTEND_BASE_URL", str(settings.api_base_url)).rstrip("/"),
         url_normalizer=normalizer,
         ledger=ledger,
         operations=operations,
@@ -358,6 +361,7 @@ def build_runtime_dependencies(settings: AppSettings, verifier: TokenVerifier) -
         ),
         feature_dependencies=features,
         local_object_router=APIRouter(),
+        profile_client=S3ProfileClient(s3, bucket),
     )
 
 
@@ -437,6 +441,7 @@ def create_app(
     app.include_router(create_query_router(dependencies.query_dependencies))
     app.include_router(create_management_router(dependencies.feature_dependencies))
     app.include_router(create_subscription_router(dependencies.feature_dependencies))
+    app.include_router(create_profile_router(dependencies.profile_client))
     if config.app_env in {"local", "test"}:
         app.include_router(dependencies.local_object_router)
     return app

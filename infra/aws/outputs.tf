@@ -30,6 +30,10 @@ output "notification_topic_arn" {
   value = aws_sns_topic.notifications.arn
 }
 
+output "notification_bridge_function_name" {
+  value = aws_lambda_function.notification_bridge.function_name
+}
+
 output "media_worker_function_name" {
   value = aws_lambda_function.media_worker.function_name
 }

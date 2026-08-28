@@ -27,6 +27,7 @@ test("renders image thumbnail links and video poster cards from signed media res
         original_url: "https://downloads.example.test/originals/camera.jpg",
         thumbnail_url: "https://downloads.example.test/derived/camera.jpg",
         tag_counts: { dingo: 2 },
+        manual_tags: ["night"],
       },
       {
         media_id: "video-1",
@@ -72,6 +73,7 @@ test("renders image thumbnail links and video poster cards from signed media res
   );
   expect(screen.getByText("Processing")).toBeInTheDocument();
   expect(screen.getByText("dingo × 2")).toBeInTheDocument();
+  expect(screen.getByText("night · manual")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "All 3" })).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Videos 1" }));
   expect(screen.queryByAltText("Image media thumbnail")).not.toBeInTheDocument();

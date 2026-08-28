@@ -34,6 +34,12 @@ resource "aws_cognito_user_pool" "main" {
   verification_message_template {
     default_email_option = "CONFIRM_WITH_CODE"
   }
+
+  # Cognito schemas are immutable after pool creation. Keep any attributes
+  # already recorded in the existing pool state without attempting removal.
+  lifecycle {
+    ignore_changes = [schema]
+  }
 }
 
 resource "aws_cognito_identity_provider" "google" {
@@ -49,8 +55,10 @@ resource "aws_cognito_identity_provider" "google" {
   }
 
   attribute_mapping = {
-    email    = "email"
-    username = "sub"
+    email       = "email"
+    username    = "sub"
+    given_name  = "given_name"
+    family_name = "family_name"
   }
 
   lifecycle {
@@ -76,8 +84,10 @@ resource "aws_cognito_identity_provider" "microsoft" {
   }
 
   attribute_mapping = {
-    email    = "email"
-    username = "sub"
+    email       = "email"
+    username    = "sub"
+    given_name  = "given_name"
+    family_name = "family_name"
   }
 
   lifecycle {
@@ -260,6 +270,7 @@ data "aws_iam_policy_document" "api_lambda" {
       "${aws_s3_bucket.media.arn}/derived/*",
       "${aws_s3_bucket.media.arn}/quarantine/*",
       "${aws_s3_bucket.media.arn}/temporary-query/*",
+      "${aws_s3_bucket.media.arn}/profiles/*",
     ]
   }
 
@@ -271,8 +282,23 @@ data "aws_iam_policy_document" "api_lambda" {
 
   statement {
     sid       = "PublishEvents"
-    actions   = ["sqs:SendMessage", "sns:Publish", "events:PutEvents"]
-    resources = [aws_sqs_queue.media_events.arn, aws_sns_topic.notifications.arn, aws_cloudwatch_event_bus.application.arn]
+    actions   = ["sqs:SendMessage", "events:PutEvents"]
+    resources = [aws_sqs_queue.media_events.arn, aws_cloudwatch_event_bus.application.arn]
+  }
+
+  statement {
+    sid       = "PublishAndCreateNotificationSubscriptions"
+    actions   = ["sns:Publish", "sns:Subscribe", "sns:ListSubscriptionsByTopic"]
+    resources = [aws_sns_topic.notifications.arn]
+  }
+
+  statement {
+    sid     = "ManageExistingNotificationSubscriptions"
+    actions = ["sns:Unsubscribe", "sns:GetSubscriptionAttributes", "sns:SetSubscriptionAttributes"]
+    resources = [
+      aws_sns_topic.notifications.arn,
+      "${aws_sns_topic.notifications.arn}:*",
+    ]
   }
 
   statement {
@@ -291,6 +317,12 @@ data "aws_iam_policy_document" "api_lambda" {
     sid       = "InvokeMediaWorker"
     actions   = ["lambda:InvokeFunction"]
     resources = [aws_lambda_function.media_worker.arn]
+  }
+
+  statement {
+    sid       = "ManageOwnCognitoProfile"
+    actions   = ["cognito-idp:GetUser", "cognito-idp:UpdateUserAttributes"]
+    resources = ["*"]
   }
 }
 
@@ -327,6 +359,7 @@ resource "aws_lambda_function" "api" {
       COGNITO_OAUTH_DOMAIN                 = "https://${aws_cognito_user_pool_domain.main.domain}.auth.${var.aws_region}.amazoncognito.com"
       COGNITO_REDIRECT_URI                 = var.frontend_callback_urls[0]
       API_BASE_URL                         = aws_apigatewayv2_api.main.api_endpoint
+      FRONTEND_BASE_URL                    = var.frontend_base_url
       AZURE_DATA_API_BASE_URL              = var.azure_data_api_base_url
       COSMOS_ENDPOINT                      = var.worker_cosmos_endpoint
       COSMOS_DATABASE                      = var.worker_cosmos_database
@@ -342,6 +375,101 @@ resource "aws_lambda_function" "api" {
   }
 
   depends_on = [aws_cloudwatch_log_group.api, aws_iam_role_policy.api_lambda]
+}
+
+resource "aws_iam_role" "notification_bridge" {
+  name = "${local.name}-notification-bridge"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "lambda.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_cloudwatch_log_group" "notification_bridge" {
+  name              = "/aws/lambda/${local.name}-notification-bridge"
+  retention_in_days = var.log_retention_days
+}
+
+data "aws_iam_policy_document" "notification_bridge" {
+  statement {
+    sid       = "WriteLogs"
+    actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
+    resources = ["${aws_cloudwatch_log_group.notification_bridge.arn}:*"]
+  }
+  statement {
+    sid       = "ReadCosmosSecret"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [aws_secretsmanager_secret.azure_worker_identity.arn]
+  }
+  statement {
+    sid       = "SnsTopicAccess"
+    actions   = ["sns:Publish", "sns:ListSubscriptionsByTopic"]
+    resources = [aws_sns_topic.notifications.arn]
+  }
+  statement {
+    sid     = "SnsSubscriptionAccess"
+    actions = ["sns:GetSubscriptionAttributes", "sns:SetSubscriptionAttributes"]
+    resources = [
+      aws_sns_topic.notifications.arn,
+      "${aws_sns_topic.notifications.arn}:*",
+    ]
+  }
+}
+
+resource "aws_iam_role_policy" "notification_bridge" {
+  name   = "${local.name}-notification-bridge-runtime"
+  role   = aws_iam_role.notification_bridge.id
+  policy = data.aws_iam_policy_document.notification_bridge.json
+}
+
+resource "aws_lambda_function" "notification_bridge" {
+  function_name    = "${local.name}-notification-bridge"
+  role             = aws_iam_role.notification_bridge.arn
+  runtime          = "python3.12"
+  handler          = "notification_adapter.handler"
+  filename         = var.api_package_path
+  source_code_hash = filebase64sha256(var.api_package_path)
+  timeout          = 30
+  memory_size      = 256
+
+  environment {
+    variables = {
+      NOTIFICATION_TOPIC               = aws_sns_topic.notifications.arn
+      AZURE_WORKER_SECRET_ARN          = aws_secretsmanager_secret.azure_worker_identity.arn
+      COSMOS_ENDPOINT                  = var.worker_cosmos_endpoint
+      COSMOS_DATABASE                  = var.worker_cosmos_database
+      COSMOS_SUBSCRIPTIONS_CONTAINER   = var.worker_cosmos_subscriptions_container
+      COSMOS_DELIVERY_LEDGER_CONTAINER = var.worker_cosmos_delivery_ledger_container
+      FRONTEND_BASE_URL                = var.frontend_base_url
+    }
+  }
+
+  depends_on = [aws_cloudwatch_log_group.notification_bridge, aws_iam_role_policy.notification_bridge]
+}
+
+resource "aws_cloudwatch_event_rule" "tagging_completed" {
+  name           = "${local.name}-tagging-completed"
+  event_bus_name = aws_cloudwatch_event_bus.application.name
+  event_pattern  = jsonencode({ source = ["pacific-bioarchive.tagging"], "detail-type" = ["TaggingCompleted"] })
+}
+
+resource "aws_cloudwatch_event_target" "notification_bridge" {
+  rule           = aws_cloudwatch_event_rule.tagging_completed.name
+  event_bus_name = aws_cloudwatch_event_bus.application.name
+  target_id      = "notification-bridge"
+  arn            = aws_lambda_function.notification_bridge.arn
+}
+
+resource "aws_lambda_permission" "notification_bridge_events" {
+  statement_id  = "AllowEventBridgeInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.notification_bridge.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.tagging_completed.arn
 }
 
 resource "aws_apigatewayv2_api" "main" {
@@ -390,6 +518,8 @@ locals {
     "POST /subscriptions",
     "PUT /subscriptions/{subscription_id}",
     "DELETE /subscriptions/{subscription_id}",
+    "GET /profile",
+    "PUT /profile",
   ])
 }
 

@@ -55,6 +55,7 @@ def _dump(subscription: Subscription) -> dict[str, object]:
         "version": subscription.version,
         "created_at": subscription.created_at.isoformat(),
         "updated_at": subscription.updated_at.isoformat(),
+        "sns_subscription_arn": subscription.sns_subscription_arn,
     }
 
 
@@ -70,4 +71,9 @@ def _load(item: dict[str, object]) -> Subscription:
         version=int(item["version"]),
         created_at=datetime.fromisoformat(str(item["created_at"])),
         updated_at=datetime.fromisoformat(str(item["updated_at"])),
+        sns_subscription_arn=(
+            str(item["sns_subscription_arn"])
+            if item.get("sns_subscription_arn")
+            else None
+        ),
     )

@@ -82,6 +82,7 @@ test("renders image previews, video links, and request errors", async () => {
         original_url: "https://signed.example.test/original.jpg",
         thumbnail_url: "https://signed.example.test/thumbnail.jpg",
         tag_counts: { dingo: 2 },
+        manual_tags: ["night"],
       },
       {
         media_id: "video-1",
@@ -114,6 +115,7 @@ test("renders image previews, video links, and request errors", async () => {
   );
   expect(screen.getByRole("status")).toHaveTextContent("2 matches");
   expect(screen.getByText("dingo × 2")).toBeInTheDocument();
+  expect(screen.getByText("night · manual")).toBeInTheDocument();
   expect(screen.getByText("wombat × 1")).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: "Search" }));

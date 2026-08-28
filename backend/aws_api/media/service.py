@@ -51,6 +51,7 @@ class MediaLibraryService:
                 else None
             ),
             tag_counts=record.tag_counts,
+            manual_tags=record.manual_tags,
         )
 
     @staticmethod

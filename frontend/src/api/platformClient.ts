@@ -12,6 +12,12 @@ type ErrorPayload = {
   message?: unknown;
 };
 
+export type UserProfile = {
+  given_name: string | null;
+  family_name: string | null;
+  complete: boolean;
+};
+
 function errorMessage(payload: unknown, status: number): string {
   if (payload && typeof payload === "object") {
     const response = payload as ErrorPayload;
@@ -55,6 +61,17 @@ export class PlatformClient implements QueryClient, ManagementClient, Subscripti
 
   deleteMedia(urls: string[], accessToken: string): Promise<void> {
     return this.json("/media", accessToken, "DELETE", { urls });
+  }
+
+  getProfile(accessToken: string): Promise<UserProfile> {
+    return this.request("/profile", accessToken, { method: "GET" });
+  }
+
+  updateProfile(givenName: string, familyName: string, accessToken: string): Promise<UserProfile> {
+    return this.json("/profile", accessToken, "PUT", {
+      given_name: givenName,
+      family_name: familyName,
+    });
   }
 
   async list(accessToken: string): Promise<SubscriptionView[]> {

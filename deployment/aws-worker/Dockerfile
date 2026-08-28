@@ -10,6 +10,8 @@ RUN python -m pip install --no-cache-dir \
       --extra-index-url https://download.pytorch.org/whl/cpu \
       "torch>=2.2,<3" "torchvision>=0.17,<1" && \
     python -m pip install --no-cache-dir -r /tmp/requirements-worker-container.txt && \
+    python -m pip install --no-cache-dir "yolov5==7.0.14" && \
+    python -m pip install --no-cache-dir --no-deps "megadetector==5.0.4" && \
     python -m pip install --no-cache-dir "opencv-python-headless>=4.8,<5" && \
     python -m pip check && \
     ffmpeg -version >/dev/null && \

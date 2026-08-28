@@ -40,6 +40,17 @@ variable "frontend_origins" {
   default     = ["http://localhost:5173"]
 }
 
+variable "frontend_base_url" {
+  description = "Browser URL included in notification links."
+  type        = string
+  default     = "http://localhost:5173"
+
+  validation {
+    condition     = can(regex("^(https://[^/]+|http://localhost(:[0-9]+)?)$", var.frontend_base_url))
+    error_message = "frontend_base_url must be HTTPS, except for localhost development URLs."
+  }
+}
+
 variable "cognito_domain_prefix" {
   description = "Globally unique Cognito hosted UI prefix."
   type        = string

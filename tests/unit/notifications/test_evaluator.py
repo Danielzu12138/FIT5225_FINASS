@@ -156,3 +156,19 @@ def test_manual_tag_event_matches_and_never_copies_private_values_to_message() -
     assert "night" in rendered.casefold()
     assert "s3://" not in rendered
     assert "secret-token" not in rendered
+
+
+def test_active_subscription_is_rechecked_when_sns_manager_is_configured() -> None:
+    repository = InMemorySubscriptionRepository()
+    repository.create(subscription(tags=("night",)))
+    notifier = RecordingNotifier()
+    evaluator = notification_evaluator.NotificationEvaluator(
+        repository=repository,
+        notifier=notifier,
+        ledger=notification_evaluator.InMemoryDeliveryLedger(),
+        app_base_url="https://app.example.test",
+        subscription_is_active=lambda _: False,
+    )
+
+    assert evaluator.evaluate(tagging_event()) == []
+    assert notifier.messages == []

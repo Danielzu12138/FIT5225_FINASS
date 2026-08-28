@@ -18,6 +18,7 @@ class Subscription:
     version: int
     created_at: datetime
     updated_at: datetime
+    sns_subscription_arn: str | None = None
 
 
 class SubscriptionRepository(Protocol):

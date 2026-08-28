@@ -31,6 +31,7 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Copy-Item -LiteralPath (Join-Path $ProjectRoot "backend") -Destination (Join-Path $StagePath "backend") -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $ProjectRoot "contracts") -Destination (Join-Path $StagePath "contracts") -Recurse -Force
 Copy-Item -LiteralPath (Join-Path (Join-Path (Join-Path $ProjectRoot "backend") "aws_api") "lambda_adapter.py") -Destination (Join-Path $StagePath "lambda_adapter.py") -Force
+Copy-Item -LiteralPath (Join-Path $ProjectRoot "notification_adapter.py") -Destination (Join-Path $StagePath "notification_adapter.py") -Force
 if (Test-Path -LiteralPath $OutputPath) {
     Remove-Item -LiteralPath $OutputPath -Force
 }

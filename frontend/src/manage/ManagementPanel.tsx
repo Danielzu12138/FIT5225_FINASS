@@ -9,6 +9,7 @@ export interface ManagementResult {
   original_url: string;
   thumbnail_url: string | null;
   tag_counts: Record<string, number>;
+  manual_tags?: string[];
 }
 
 export interface ManagementClient {
@@ -80,6 +81,12 @@ export function ManagementPanel({ client }: { client: ManagementClient }) {
     setError(null);
     try {
       await client.updateTags(selectedUrls, normalized, operation, accessToken);
+      setResults((current) => current.map((result) => {
+        if (!selected.has(result.media_id)) return result;
+        const existing = new Set(result.manual_tags ?? []);
+        normalized.forEach((tag) => operation === 1 ? existing.add(tag) : existing.delete(tag));
+        return { ...result, manual_tags: [...existing].sort() };
+      }));
       setMessage("Tags updated.");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "The tag update failed");
@@ -114,7 +121,7 @@ export function ManagementPanel({ client }: { client: ManagementClient }) {
       <p className="panel-description">Upload a reference file to find similar records, then apply tags or delete selected items in one action.</p>
       <div className="management-search">
         <label htmlFor="query-file">Query file</label>
-        <input id="query-file" type="file" accept="image/jpeg,image/png,video/mp4" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
+        <input id="query-file" type="file" accept="image/jpeg,image/png,video/mp4,video/quicktime,.mov" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
         <button type="button" disabled={!file || busy || !accessToken} onClick={() => void runQuery()}>Find matching media</button>
       </div>
 
@@ -140,7 +147,10 @@ export function ManagementPanel({ client }: { client: ManagementClient }) {
                   <div className="management-record">
                     <label><input type="checkbox" checked={selected.has(result.media_id)} onChange={() => toggle(result.media_id)} />{`Select ${name}`}</label>
                     <a href={result.original_url} target="_blank" rel="noreferrer">{`Open ${name}`}</a>
-                    <div className="tag-list">{Object.entries(result.tag_counts).map(([tag, count]) => <span className="tag-chip" key={tag}>{`${tag}: ${count}`}</span>)}</div>
+                    <div className="tag-list">
+                      {Object.entries(result.tag_counts).map(([tag, count]) => <span className="tag-chip" key={`detected-${tag}`}>{`${tag}: ${count}`}</span>)}
+                      {(result.manual_tags ?? []).map((tag) => <span className="tag-chip tag-chip-manual" key={`manual-${tag}`}>{`${tag} · manual`}</span>)}
+                    </div>
                   </div>
                 </li>
               );

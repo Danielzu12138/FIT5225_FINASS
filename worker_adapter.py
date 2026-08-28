@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from urllib.parse import unquote_plus
 
 from backend.azure_api.media.cosmos_repository import CosmosPagedMediaRepository
-from backend.common.contracts.models import MediaPreparedEvent
+from backend.common.contracts.models import MediaPreparedEvent, TaggingCompletedEvent
 from backend.common.providers.fakes import FixedClock
 from backend.common.providers.interfaces import EventPublisher, IdGenerator, ObjectStorage
 from backend.media_processor.images.handler import ImageEventHandler, ObjectHead as ImageHead
@@ -79,13 +79,32 @@ class ObjectHead:
     version_id: str | None = None
 
 
-class SqsPublisher(EventPublisher):
-    def __init__(self, client, queue_url: str) -> None:
-        self._client, self._queue_url = client, queue_url
+class WorkerEventPublisher(EventPublisher):
+    """Route prepared-media work to SQS and completion events to EventBridge."""
+
+    def __init__(self, sqs_client, queue_url: str, events_client, event_bus_name: str) -> None:
+        self._sqs = sqs_client
+        self._queue_url = queue_url
+        self._events = events_client
+        self._event_bus_name = event_bus_name
 
     def publish(self, event: object) -> None:
         payload = event.model_dump(mode="json") if hasattr(event, "model_dump") else event
-        self._client.send_message(QueueUrl=self._queue_url, MessageBody=json.dumps(payload))
+        if isinstance(event, TaggingCompletedEvent):
+            response = self._events.put_events(
+                Entries=[
+                    {
+                        "EventBusName": self._event_bus_name,
+                        "Source": "pacific-bioarchive.tagging",
+                        "DetailType": "TaggingCompleted",
+                        "Detail": json.dumps(payload),
+                    }
+                ]
+            )
+            if int(response.get("FailedEntryCount", 0)):
+                raise RuntimeError("EventBridge rejected the tagging completion event")
+            return
+        self._sqs.send_message(QueueUrl=self._queue_url, MessageBody=json.dumps(payload))
 
 
 class UuidIds(IdGenerator):
@@ -160,7 +179,8 @@ def _build():
     s3 = boto3.client("s3", region_name=region)
     sqs = boto3.client("sqs", region_name=region)
     storage = S3Storage(s3, bucket)
-    publisher = SqsPublisher(sqs, queue_url)
+    events = boto3.client("events", region_name=region)
+    publisher = WorkerEventPublisher(sqs, queue_url, events, os.environ["EVENT_BUS_NAME"])
     from azure.cosmos import CosmosClient
     cosmos = CosmosClient(os.environ["COSMOS_ENDPOINT"], credential=_cosmos_credential())
     container = cosmos.get_database_client(os.environ.get("COSMOS_DATABASE", "bioarchive")).get_container_client("media")

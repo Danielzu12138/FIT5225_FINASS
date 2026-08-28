@@ -113,6 +113,7 @@ describe("ManagementPanel", () => {
       ),
     );
     expect(await screen.findByRole("status")).toHaveTextContent("Tags updated.");
+    expect(screen.getByText("night · manual")).toBeInTheDocument();
   });
 
   it("requires confirmation before deleting selected results", async () => {

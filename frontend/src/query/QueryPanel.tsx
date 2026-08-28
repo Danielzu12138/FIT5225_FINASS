@@ -10,6 +10,7 @@ export interface QueryResult {
   original_url: string;
   thumbnail_url: string | null;
   tag_counts: Record<string, number>;
+  manual_tags?: string[];
 }
 
 export interface QueryResponse {
@@ -203,7 +204,10 @@ export function QueryPanel({ client }: { client: QueryClient }) {
                 </div>
                 <div className="media-card-body">
                   <div className="media-card-title"><strong>{result.media_type === "image" ? "Matching image" : "Matching video"}</strong><span>{result.media_id.slice(0, 8)}</span></div>
-                  <div className="tag-list">{Object.entries(result.tag_counts).map(([tag, count]) => <span className="tag-chip" key={tag}>{`${tag} × ${count}`}</span>)}</div>
+                  <div className="tag-list">
+                    {Object.entries(result.tag_counts).map(([tag, count]) => <span className="tag-chip" key={`detected-${tag}`}>{`${tag} × ${count}`}</span>)}
+                    {(result.manual_tags ?? []).map((tag) => <span className="tag-chip tag-chip-manual" key={`manual-${tag}`}>{`${tag} · manual`}</span>)}
+                  </div>
                 </div>
               </li>
             ))}

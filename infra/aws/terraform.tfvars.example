@@ -5,6 +5,7 @@ cognito_domain_prefix  = "replace-with-globally-unique-prefix"
 frontend_callback_urls = ["http://localhost:5173/auth/callback"]
 frontend_logout_urls   = ["http://localhost:5173"]
 frontend_origins       = ["http://localhost:5173"]
+frontend_base_url      = "http://localhost:5173"
 azure_data_api_base_url = "https://replace-function-app.azurewebsites.net"
 
 # Worker production prerequisites (supply a reachable Cosmos endpoint and

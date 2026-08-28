@@ -8,11 +8,16 @@ from typing import Protocol
 from backend.aws_api.management.deletion import CrossCloudDeleteService, DeletionOperationStore, InMemoryDeletionOperationStore
 from backend.azure_api.management.service import BulkTagService, SignedUrlNormalizer
 from backend.azure_api.subscriptions.repository import SubscriptionRepository
-from backend.azure_api.subscriptions.service import SubscriptionService
+from backend.azure_api.subscriptions.service import SubscriptionManager, SubscriptionService
 from backend.common.providers.interfaces import Clock, EventPublisher, IdGenerator, MediaRepository, Notifier, ObjectStorage
 from backend.common.config.settings import AppSettings
 from backend.notification_bridge.evaluator import DeliveryLedger, InMemoryDeliveryLedger, NotificationEvaluator
 from backend.notification_bridge.sns import SnsNotifier, SnsPublishClient
+from backend.notification_bridge.subscriptions import SnsEmailSubscriptionManager, SnsSubscriptionClient
+
+
+class SnsFeatureClient(SnsPublishClient, SnsSubscriptionClient, Protocol):
+    pass
 
 
 class NotificationEventPublisher(EventPublisher):
@@ -50,6 +55,7 @@ def build_feature_dependencies(
     url_normalizer: StorageUrlNormalizer | None = None,
     ledger: DeliveryLedger | None = None,
     operations: DeletionOperationStore | None = None,
+    subscription_manager: SubscriptionManager | None = None,
 ) -> FeatureDependencies:
     """Build owner-scoped services with notification evaluation on tag events."""
 
@@ -62,6 +68,7 @@ def build_feature_dependencies(
         notifier=notifier,
         ledger=ledger or InMemoryDeliveryLedger(),
         app_base_url=application_base_url,
+        subscription_is_active=(subscription_manager.status_check if subscription_manager is not None else None),
     )
     publisher = NotificationEventPublisher(evaluator)
     return FeatureDependencies(
@@ -84,6 +91,7 @@ def build_feature_dependencies(
             repository=subscription_repository,
             clock=clock,
             ids=ids,
+            manager=subscription_manager,
         ),
     )
 
@@ -91,7 +99,7 @@ def build_feature_dependencies(
 def build_sns_feature_dependencies(
     *,
     settings: AppSettings,
-    sns_client: SnsPublishClient,
+    sns_client: SnsFeatureClient,
     media_repository: MediaRepository,
     storage: ObjectStorage,
     subscription_repository: SubscriptionRepository,
@@ -109,6 +117,7 @@ def build_sns_feature_dependencies(
     topic_arn = settings.notification_topic
     if topic_arn is None:
         raise ValueError("NOTIFICATION_TOPIC must configure the SNS topic ARN")
+    manager = SnsEmailSubscriptionManager(client=sns_client, topic_arn=topic_arn)
     return build_feature_dependencies(
         media_repository=media_repository,
         storage=storage,
@@ -122,4 +131,5 @@ def build_sns_feature_dependencies(
         url_normalizer=url_normalizer,
         ledger=ledger,
         operations=operations,
+        subscription_manager=manager,
     )
