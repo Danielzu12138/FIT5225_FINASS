@@ -93,7 +93,7 @@ def test_repository_contains_only_approved_markdown_documents() -> None:
         )
     )
 
-    assert markdown_files == ["README.md", "TEAM_FRONTEND_RUNBOOK.md"]
+    assert markdown_files == ["README.md", "TEAM_FRONTEND_RUNBOOK.md", "models/README.md"]
 
 
 def test_deployment_verifier_preserves_human_evidence_boundaries() -> None:

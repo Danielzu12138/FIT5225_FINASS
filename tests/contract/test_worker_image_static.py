@@ -20,9 +20,9 @@ def test_worker_image_avoids_megadetector_protobuf_resolver_conflict() -> None:
 
 
 def test_worker_push_script_refreshes_ecr_authentication() -> None:
-    script = (ROOT / "scripts" / "build-push-aws-worker-image.sh").read_text(encoding="utf-8")
+    script = (ROOT / "scripts" / "project_tasks.py").read_text(encoding="utf-8")
 
-    assert "aws sts get-caller-identity" in script
-    assert "aws ecr describe-repositories" in script
-    assert "aws ecr get-login-password" in script
-    assert "docker login --username AWS --password-stdin" in script
+    assert '"sts", "get-caller-identity"' in script
+    assert '"ecr", "describe-repositories"' in script
+    assert '"ecr", "get-login-password"' in script
+    assert '"login", "--username", "AWS", "--password-stdin"' in script

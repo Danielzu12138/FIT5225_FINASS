@@ -6,4 +6,4 @@ if [[ -z "${python_bin}" ]]; then
   echo "Activate a Python 3.12 environment before running this script." >&2
   exit 1
 fi
-exec "${python_bin}" "${script_dir}/project_tasks.py" build-push-worker-image "$@"
+exec "${python_bin}" "${script_dir}/project_tasks.py" lock-terraform-providers "$@"
