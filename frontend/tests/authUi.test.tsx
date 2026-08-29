@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -6,6 +6,7 @@ import { AuthContext, type AuthContextValue } from "../src/auth/AuthContext";
 import { ProtectedRoute } from "../src/auth/ProtectedRoute";
 import { CallbackPage } from "../src/pages/CallbackPage";
 import { LoginPage } from "../src/pages/LoginPage";
+import { SignupPage } from "../src/pages/SignupPage";
 import { VerificationPage } from "../src/pages/VerificationPage";
 
 afterEach(cleanup);
@@ -24,6 +25,8 @@ function value(overrides: Partial<AuthContextValue> = {}): AuthContextValue {
     accessToken: null,
     login: vi.fn(),
     signup: vi.fn(),
+    confirmRegistration: vi.fn(),
+    resendRegistration: vi.fn(),
     localLogin: vi.fn(),
     completeCallback: vi.fn(),
     logout: vi.fn(),
@@ -135,5 +138,55 @@ describe("authentication UI", () => {
     );
     expect(screen.getByRole("status")).toHaveTextContent("Validating your secure session");
     expect(screen.getByText("Pacific BioArchive")).toBeInTheDocument();
+  });
+
+  it("collects email, first name, last name and password before verification", async () => {
+    const signup = vi.fn().mockResolvedValue({ userConfirmed: false, destination: "r***@example.com" });
+    render(
+      <AuthContext.Provider value={value({ signup })}>
+        <MemoryRouter initialEntries={["/signup"]}>
+          <Routes>
+            <Route path="/signup" element={<SignupPage />} />
+            <Route path="/verify" element={<p>Verification route</p>} />
+          </Routes>
+        </MemoryRouter>
+      </AuthContext.Provider>,
+    );
+
+    fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "Researcher@Example.com" } });
+    fireEvent.change(screen.getByLabelText("Given name"), { target: { value: "Ada" } });
+    fireEvent.change(screen.getByLabelText("Family name"), { target: { value: "Lovelace" } });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "SecurePassword!2" } });
+    fireEvent.change(screen.getByLabelText("Confirm password"), { target: { value: "SecurePassword!2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create account" }));
+
+    await waitFor(() => expect(signup).toHaveBeenCalledWith({
+      email: "researcher@example.com",
+      password: "SecurePassword!2",
+      givenName: "Ada",
+      familyName: "Lovelace",
+    }));
+    expect(await screen.findByText("Verification route")).toBeInTheDocument();
+  });
+
+  it("confirms an unfinished registration and can resend its code", async () => {
+    const confirmRegistration = vi.fn().mockResolvedValue(undefined);
+    const resendRegistration = vi.fn().mockResolvedValue("r***@example.com");
+    render(
+      <AuthContext.Provider value={value({ confirmRegistration, resendRegistration })}>
+        <MemoryRouter initialEntries={["/verify?email=researcher%40example.com"]}>
+          <VerificationPage />
+        </MemoryRouter>
+      </AuthContext.Provider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Resend code" }));
+    expect(await screen.findByText("A new verification code was sent to r***@example.com.")).toBeInTheDocument();
+    expect(resendRegistration).toHaveBeenCalledWith("researcher@example.com");
+
+    fireEvent.change(screen.getByLabelText("Verification code"), { target: { value: "123456" } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm email" }));
+    expect(await screen.findByText("Email confirmed. You can now sign in.")).toBeInTheDocument();
+    expect(confirmRegistration).toHaveBeenCalledWith("researcher@example.com", "123456");
   });
 });

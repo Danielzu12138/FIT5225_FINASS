@@ -1,6 +1,12 @@
 import { createContext, type PropsWithChildren, useContext, useEffect, useMemo, useState } from "react";
 
-import { type AuthConfig, BrowserAuthClient } from "./authClient";
+import {
+  type AuthConfig,
+  AUTHENTICATION_REQUIRED_EVENT,
+  BrowserAuthClient,
+  type CognitoSignupResult,
+  type SignupDetails,
+} from "./authClient";
 
 export type AuthStatus = "loading" | "anonymous" | "authenticated";
 
@@ -13,7 +19,9 @@ export interface AuthContextValue {
   profileError?: string | null;
   refreshProfile?: () => Promise<void>;
   login(provider?: string): Promise<void>;
-  signup(): Promise<void>;
+  signup(details: SignupDetails): Promise<CognitoSignupResult>;
+  confirmRegistration(email: string, code: string): Promise<void>;
+  resendRegistration(email: string): Promise<string | undefined>;
   localLogin(): Promise<void>;
   completeCallback(search: string): Promise<void>;
   logout(): void;
@@ -66,6 +74,18 @@ export function AuthProvider({ children }: PropsWithChildren) {
       });
   }, [client]);
 
+  useEffect(() => {
+    const requireAuthentication = () => {
+      client?.logout(false);
+      setAccessToken(null);
+      setProfileComplete(null);
+      setProfileError(null);
+      setStatus("anonymous");
+    };
+    window.addEventListener(AUTHENTICATION_REQUIRED_EVENT, requireAuthentication);
+    return () => window.removeEventListener(AUTHENTICATION_REQUIRED_EVENT, requireAuthentication);
+  }, [client]);
+
   const value = useMemo<AuthContextValue>(
     () => ({
       status,
@@ -77,9 +97,17 @@ export function AuthProvider({ children }: PropsWithChildren) {
         if (!client) throw new Error("Authentication is not configured");
         await client.beginLogin(provider);
       },
-      signup: async () => {
+      signup: async (details: SignupDetails) => {
         if (!client) throw new Error("Authentication is not configured");
-        await client.beginSignup();
+        return client.signUp(details);
+      },
+      confirmRegistration: async (email: string, code: string) => {
+        if (!client) throw new Error("Authentication is not configured");
+        await client.confirmSignUp(email, code);
+      },
+      resendRegistration: async (email: string) => {
+        if (!client) throw new Error("Authentication is not configured");
+        return client.resendConfirmationCode(email);
       },
       localLogin: async () => {
         if (!client || !config?.local_auth_enabled) throw new Error("Local authentication is disabled");

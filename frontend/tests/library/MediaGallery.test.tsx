@@ -10,6 +10,8 @@ const authenticated: AuthContextValue = {
   accessToken: "access-token",
   login: vi.fn(),
   signup: vi.fn(),
+  confirmRegistration: vi.fn(),
+  resendRegistration: vi.fn(),
   localLogin: vi.fn(),
   completeCallback: vi.fn(),
   logout: vi.fn(),
@@ -93,6 +95,8 @@ test("confirms card deletion and keeps a failed item with the API error", async 
     original_url: null,
     thumbnail_url: null,
     tag_counts: {},
+    failure_code: "IMAGE_CORRUPT",
+    failure_message: "Image could not be decoded",
   };
   const list = vi.fn().mockResolvedValue({ results: [failed] });
   const deleteMediaById = vi.fn().mockResolvedValue({
@@ -106,6 +110,10 @@ test("confirms card deletion and keeps a failed item with the API error", async 
   );
 
   await screen.findByText("Failed");
+  expect(screen.getByText("Processing failed")).toBeInTheDocument();
+  expect(screen.getByText("Image could not be decoded")).toBeInTheDocument();
+  expect(screen.getByText("IMAGE_CORRUPT")).toBeInTheDocument();
+  expect(screen.queryByText("Preview is being prepared")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Delete image" }));
   expect(screen.getByRole("dialog", { name: "Confirm deletion" })).toBeInTheDocument();
   expect(deleteMediaById).not.toHaveBeenCalled();
@@ -114,6 +122,29 @@ test("confirms card deletion and keeps a failed item with the API error", async 
   await waitFor(() => expect(deleteMediaById).toHaveBeenCalledWith("failed-1", "access-token"));
   expect(await screen.findByRole("alert")).toHaveTextContent("processing record is locked");
   expect(screen.getByText("Failed")).toBeInTheDocument();
+});
+
+test("keeps polling while media is prepared but tagging is not ready", async () => {
+  const interval = vi.spyOn(window, "setInterval");
+  const prepared = {
+    media_id: "prepared-1",
+    media_type: "image" as const,
+    status: "prepared" as const,
+    original_url: "https://downloads.example.test/prepared.jpg",
+    thumbnail_url: "https://downloads.example.test/prepared-thumb.jpg",
+    tag_counts: {},
+  };
+  const list = vi.fn().mockResolvedValue({ results: [prepared] });
+
+  render(
+    <AuthContext.Provider value={authenticated}>
+      <MediaGallery client={{ list, deleteMediaById: vi.fn() }} />
+    </AuthContext.Provider>,
+  );
+
+  await screen.findByText("Prepared");
+  expect(interval).toHaveBeenCalled();
+  interval.mockRestore();
 });
 
 test("removes a card only after the single-delete outcome is deleted", async () => {
