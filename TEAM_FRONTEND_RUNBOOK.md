@@ -1,236 +1,206 @@
-# Pacific BioArchive 队友运行与测试指南
+# Pacific BioArchive 开发、测试、构建与部署指南
 
-本文档用于队友在本地运行已部署的 Pacific BioArchive 前端，并验证现有 AWS/Azure 云端功能。
+本文档分成两条流程：日常前端测试，以及完整构建/云部署。
 
-本指南默认使用已经部署好的开发环境，不执行 Terraform，不创建新的云资源。
+除非步骤明确要求进入 `frontend` 或 `build/azure-function-app`，所有命令都从仓库根目录执行。进入子目录完成操作后，先返回仓库根目录再执行下一节。
 
-## 1. 当前环境
+> **固定访问地址：`http://localhost:5173`。** 不要使用 `http://127.0.0.1:5173`，也不要让 Vite 切换到 `5174`。`localhost` 和 `127.0.0.1` 是不同的浏览器 origin；当前 API CORS 和 Cognito callback 只允许 `http://localhost:5173`。地址错误会导致登录/注册显示 `Authentication is not configured`。
+
+共享开发环境：
 
 | 项目 | 值 |
 |---|---|
-| AWS Region | `ap-southeast-2` |
-| AWS Account | `983367475562` |
+| AWS Region / Account | `ap-southeast-2` / `983367475562` |
 | AWS API | `https://j85cs8gf3d.execute-api.ap-southeast-2.amazonaws.com` |
-| S3 Bucket | `pacific-bioarchive-development-media-983367475562` |
-| API Lambda | `pacific-bioarchive-development-api` |
-| Worker Lambda | `pacific-bioarchive-development-media-worker` |
+| API / Worker Lambda | `pacific-bioarchive-development-api` / `pacific-bioarchive-development-media-worker` |
 | Azure Subscription | `6932a700-63c2-4df8-8964-c5e0e2b906e2` |
 | Azure Resource Group | `pacific-bioarchive-development-rg-kr` |
 | Azure Function | `pacific-bioarchive-development-data-pba826` |
-| Azure Function URL | `https://pacific-bioarchive-development-data-pba826.azurewebsites.net` |
-| Cognito User Pool | `ap-southeast-2_XQbfs4ef4` |
-| Cognito App Client | `6fp1i37u3jtcoe9sggbe71uocn` |
-| Cognito Domain | `https://pba826-group9.auth.ap-southeast-2.amazoncognito.com` |
 
-## 2. 不要共享或提交的内容
+## 第一部分：配置环境并运行前端进行测试
 
-以下内容不要放进 GitHub，也不要放进普通聊天或压缩包：
+### 1. 环境要求
 
-- AWS Secret Access Key、Azure 密码、MFA 验证码
-- Cognito access token、refresh token、ID token
-- AWS Secrets Manager 中的 Cosmos Key
-- `infra/aws/terraform.tfvars`
-- `infra/azure/terraform.tfvars`
-- `.env`、`.env.local` 中的私有凭据
-- `*.tfstate`、`*.tfstate.*`
-- `.venv/`、`frontend/node_modules/`、`build/`、`.terraform/`
+前端测试只需要已激活的 Python `3.12` 环境、Node.js/npm 和可访问云端 API 的网络。脚本使用当前 `PATH` 中的 `python`，不会创建 `.venv`，也不依赖固定环境名或绝对路径。
 
-队友可以使用自己的 AWS IAM 身份和 Azure 登录账号访问同一个开发环境。需要发布 Lambda、ECR 镜像或 Azure Function 时，账号必须具有相应的发布权限。
-
-## 3. 本地依赖与统一解释器规则
-
-Windows 和 macOS 都必须先激活一个 Python `3.12` 环境，再运行项目命令。脚本只使用当前 `PATH` 中的 `python`，不会创建环境，也不会绑定 Conda 环境名或本机绝对路径。Windows 当前可使用团队已有的 Conda 环境；macOS 可使用 Conda 或自行创建的虚拟环境。
-
-还需安装 Node.js/npm、Terraform、Docker Desktop、AWS CLI、Azure CLI 和 Azure Functions Core Tools 4。激活 Python 环境后，从项目根目录统一检查：
-
-```text
-python scripts/check-environment.py
-```
-
-检查器会打印实际 `sys.executable`、Python 版本、每个工具的路径和版本，并检查 Docker daemon。任何 `MISSING` 或 `FAIL` 都应先解决。
-
-## 4. 初始化依赖
-
-### 4.1 Windows PowerShell
+Windows 当前机器示例：
 
 ```powershell
 conda activate 5225A2
+python --version
+python -c "import sys; print(sys.executable)"
+```
+
+macOS 可使用任意名称的 Conda 或 Python 3.12 虚拟环境：
+
+```bash
+source <environment-directory>/bin/activate
+python --version
+python -c 'import sys; print(sys.executable)'
+```
+
+### 2. 首次初始化
+
+从项目根目录运行。
+
+Windows PowerShell：
+
+```powershell
 python scripts/check-environment.py
 .\scripts\bootstrap.ps1
 ```
 
-### 4.2 macOS
-
-可激活已有 Conda 环境，或创建任意名称的 Python 3.12 虚拟环境：
+macOS：
 
 ```bash
-python3.12 -m venv <environment-directory>
-source <environment-directory>/bin/activate
 python scripts/check-environment.py
 bash scripts/bootstrap.sh
 ```
 
-`bootstrap` 使用当前 Python 安装后端开发依赖和 Azure Function 依赖，并在 `frontend` 中执行 `npm ci`。
+`bootstrap` 使用当前 Python 安装项目依赖，并在 `frontend` 中执行 `npm ci`。仅运行前端时，缺少 Terraform、Docker 或云 CLI 不会阻止 Vite；部署前则必须补齐。
 
-## 5. 配置前端
+### 3. 配置云端 API
 
-前端只连接 AWS API Gateway，不直接连接 Azure Function。在 `frontend/.env.local` 中写入：
+创建或检查 `frontend/.env.local`：
 
 ```dotenv
 VITE_API_BASE_URL=https://j85cs8gf3d.execute-api.ap-southeast-2.amazonaws.com
 ```
 
-该文件已被 Git 忽略，不要提交。不要把 OAuth client secret 或访问令牌写入任何前端环境变量。
+该文件已被 Git 忽略。修改后必须重启 Vite。不要把 OAuth secret、云凭据或 token 写入前端变量。
 
-## 6. 登录云平台
+### 4. 启动前端
 
-仅运行本地 UI 时不要求云 CLI 登录；查看日志或发布时必须登录。以下命令都应在已激活的 Python 环境所在终端执行。
-
-### 6.1 Windows PowerShell
+Windows PowerShell：
 
 ```powershell
-$env:AWS_PROFILE = "pba-team"
-$env:AWS_REGION = "ap-southeast-2"
-aws sso login --profile pba-team
-aws sts get-caller-identity
-
-az login
-az account set --subscription 6932a700-63c2-4df8-8964-c5e0e2b906e2
-az account show --output table
-```
-
-如果团队身份不是 SSO profile，先按管理员提供的方式执行 `aws configure --profile pba-team`。AWS 输出 Account 应为 `983367475562`。
-
-### 6.2 macOS
-
-```bash
-export AWS_PROFILE=pba-team
-export AWS_REGION=ap-southeast-2
-aws sso login --profile pba-team
-aws sts get-caller-identity
-
-az login
-az account set --subscription 6932a700-63c2-4df8-8964-c5e0e2b906e2
-az account show --output table
-```
-
-## 7. 启动和端口检查
-
-本地完整应用固定使用后端 `8000` 和前端 `5173`。Cognito 回调依赖 `http://localhost:5173`，不要让 Vite 自动切换到 `5174`。
-
-Windows：
-
-```powershell
-Get-NetTCPConnection -LocalPort 5173,8000 -State Listen -ErrorAction SilentlyContinue
-.\scripts\start-local.ps1
-```
-
-如端口被旧进程占用，先查看 PID，再明确停止目标进程：
-
-```powershell
-Get-NetTCPConnection -LocalPort 5173 -State Listen | Select-Object LocalPort,OwningProcess
-Stop-Process -Id <PID>
+Get-NetTCPConnection -LocalPort 5173 -State Listen -ErrorAction SilentlyContinue
+Set-Location frontend
+npm run dev -- --host localhost --port 5173 --strictPort
 ```
 
 macOS：
 
 ```bash
 lsof -nP -iTCP:5173 -sTCP:LISTEN
-lsof -nP -iTCP:8000 -sTCP:LISTEN
+cd frontend
+npm run dev -- --host localhost --port 5173 --strictPort
+```
+
+只打开 `http://localhost:5173/login`。`--strictPort` 会在端口被占用时直接报错，不会切换到不在 Cognito 白名单中的端口。按 Ctrl+C 停止。
+
+若还需同时测试本地 Python API，可从项目根目录运行：
+
+```powershell
+.\scripts\start-local.ps1
+```
+
+```bash
 bash scripts/start-local.sh
 ```
 
-确认 PID 后可用 `kill <PID>` 结束旧进程。启动后打开 `http://localhost:5173/login`；按 Ctrl+C 会同时结束由脚本启动的前后端进程。
+即使日志显示监听环回地址，浏览器仍应使用 `localhost`，不要手动改为 `127.0.0.1`。
 
-## 8. 页面功能测试
-
-### 8.1 登录和退出
-
-1. 点击 `Create an account`。
-2. 使用队友自己的邮箱和密码注册，并在项目注册页填写 `Given name` 和 `Family name`；这些值作为 Cognito 标准属性提交。
-3. 在邮箱中输入 Cognito 验证码。
-4. 返回登录页面并登录。
-5. 如果首次登录跳转到 `/profile`，填写 `Given name` 和 `Family name`，点击 `Save and continue`。
-6. 确认可以看到主工作区。
-7. 点击 `Sign out`，确认返回登录页。
-8. 再次登录，确认会话恢复正常且不会重复要求姓名。
-
-外部登录按钮只应在对应 Cognito provider 已成功部署后由 `/auth/config` 返回。当前 Terraform state 尚未确认，不要为了启用按钮执行 `terraform apply`。state 恢复并由团队完成 Google provider 注册/部署后，先完成一次浏览器 consent 和登录，再运行以下只读检查：
+### 5. 前端测试和构建检查
 
 ```powershell
-python scripts\check_external_provider.py `
-  --user-pool-id <pool-id> --app-client-id <client-id> `
-  --provider Google --region ap-southeast-2 --require-user
+.\scripts\test-frontend.ps1
 ```
-
-macOS 在已激活的 Python 3.12 环境中运行：
 
 ```bash
-python scripts/check_external_provider.py \
-  --user-pool-id <pool-id> --app-client-id <client-id> \
-  --provider Google --region ap-southeast-2 --require-user
+bash scripts/test-frontend.sh
 ```
 
-检查必须同时确认 provider、app client authorization-code flow、email/given_name/family_name mapping 和 `EXTERNAL_PROVIDER` 用户记录。人工证据应包含 Google consent、Cognito federated user、登录后的姓名/email claims，以及退出后再次登录；截图不得包含 token 或 client secret。
+也可在 `frontend` 目录分别运行：
 
-### 8.2 上传和去重
+```bash
+npm test -- --run
+npm run build
+```
 
-准备 `.jpg`/`.png` 图片（最大 25 MiB）或 `.mp4`/`.mov` 视频（最大 512 MiB、最长 120 秒）。前端会在计算 checksum 和创建 reservation 前拒绝超限文件。
+### 6. 浏览器测试顺序
 
-1. 在 `Upload wildlife media` 中选择文件。
-2. 点击 `Upload to archive`。
-3. 在 `Your media library` 中等待状态从 `Processing` 变成 `Ready`。
-4. 图片应显示缩略图；视频应显示视频预览或缩略图。
-5. 再次上传完全相同的文件。
-6. 页面应提示文件已经存在，不应创建新的媒体记录。
+1. 用自己的邮箱注册，填写 email、given name、family name 和密码。
+2. 从邮箱或垃圾邮件取得 Cognito 验证码，确认后测试登录、退出和再次登录。
+3. 上传 JPG/PNG 或 MP4/MOV，等待状态变为 `Ready`。
+4. 重复上传相同文件，确认不会产生第二条记录。
+5. 测试 Species、Tag counts、多标签 AND 查询和查询图片。
+6. 测试批量添加/移除标签、删除媒体，并检查逐项结果。
+7. 创建订阅、完成 SNS 邮箱确认、修改和删除订阅。
 
-### 8.3 查询
+前端限制：图片最大 25 MiB；视频最大 512 MiB、最长 120 秒。查询文件不应进入媒体库或永久保留。
 
-在 `Search wildlife media` 中测试：
+### 7. 常见问题
 
-1. `Species`：输入一个已识别的物种名称。
-2. `Tag counts`：输入物种并将 `Minimum count` 设为 `1`。
-3. 添加第二个 tag，确认多个 tag 是同时满足的 AND 查询。
-4. `Thumbnail URL`：在浏览器开发者工具的 Elements 或 Network 中复制缩略图请求 URL，输入后确认返回对应原图。不要把预签名 URL 发到聊天中。
-5. 在 `Media management` 的 `Query file` 上传一张图片，确认返回相似媒体。
+**`Authentication is not configured`**
 
-查询结果中：
+依次检查：
 
-- 图片应能预览缩略图，点击后打开原图。
-- 视频应能打开原始视频。
-- 查询文件本身不应出现在媒体库中。
+1. 地址必须是 `http://localhost:5173`，不能是 `127.0.0.1` 或 `5174`。
+2. `.env.local` 中必须有正确的 `VITE_API_BASE_URL`。
+3. 修改配置后必须重启 Vite。
+4. 以下接口应返回 `200` 和 `access-control-allow-origin: http://localhost:5173`：
 
-### 8.4 手动标签和删除
+```powershell
+curl.exe -i -H "Origin: http://localhost:5173" https://j85cs8gf3d.execute-api.ap-southeast-2.amazonaws.com/auth/config
+```
 
-1. 在 `Media management` 上传一个查询文件并点击 `Find matching media`。
-2. 选择一条或多条结果。
-3. 在 `Tags` 输入，例如 `night, field-test`。
-4. 点击 `Add tags`。
-5. 刷新页面，确认操作完成。
-6. 选择结果并点击 `Remove tags`，确认标签可以删除。
-7. 在查询页面选择 `Tag counts`，输入 `night`，最小数量填 `1`，确认可以查到带有该手动 tag 的媒体。
-8. 选择一条测试媒体，点击 `Delete selected` 并确认。
-9. 确认媒体库记录消失。
+macOS 将 `curl.exe` 换为 `curl`。
 
-手动 tag 是存在型标签：`night:1` 可以匹配，`night:2` 不会匹配。
+**`Port 5173 is already in use`**
 
-### 8.5 订阅页面
+Windows：
 
-1. 输入邮箱和要关注的 tag，例如 `dingo, night`。
-2. 点击 `Create subscription`。
-3. 打开邮箱中的 AWS SNS confirmation 链接。
-4. 刷新页面，确认状态从 `Pending confirmation` 变为 `Active`。
-5. 测试编辑 tag 和删除订阅。
-6. 验证完整通知链路时，创建一个唯一测试 tag（例如 `notification-test`），在 `Media management` 中选中媒体并添加相同手动 tag。
-7. 确认收到主题为 `Pacific BioArchive: notification-test detected` 的邮件。
+```powershell
+Get-NetTCPConnection -LocalPort 5173 -State Listen | Select-Object LocalPort,OwningProcess
+Get-Process -Id <PID>
+```
 
-当前订阅页面已支持订阅记录的创建、读取、编辑和删除，SNS 邮箱确认和标签匹配通知链路已经实现。测试完成后移除测试标签并删除测试订阅。
+确认是旧 Vite 后再运行 `Stop-Process -Id <PID>`。macOS 使用 `lsof -nP -iTCP:5173 -sTCP:LISTEN`，确认后运行 `kill <PID>`。
 
-## 9. 测试、构建与发布
+**Processing、Failed 或缩略图 unavailable**
 
-以下流程不运行 Terraform。云资源已存在，但 Terraform backend/state 归属尚未确认，因此禁止直接执行 `terraform plan` 或 `terraform apply`；先由团队确认 backend，并把现存资源 import 到正确 state。
+先刷新媒体库。若状态不变，检查 Worker 健康状态、CloudWatch 和 SQS/DLQ；`Failed` 是终止状态，不表示仍在生成预览。
 
-### 9.1 标准测试与静态验证
+**`401 Access token is invalid`**
+
+退出后重新登录，且不要复制或分享任何 Cognito token。
+
+## 第二部分：配置构建和部署环境及方法
+
+### 1. 完整工具链和云登录
+
+部署终端必须先激活 Python `3.12`，并安装 Node/npm、Terraform、Docker Desktop、AWS CLI、Azure CLI 和 Azure Functions Core Tools 4。统一检查：
+
+```bash
+python scripts/check-environment.py
+```
+
+部署前不应有 `MISSING` 或 `FAIL`。然后确认身份。
+
+Windows PowerShell：
+
+```powershell
+$env:AWS_PROFILE = "pba-team"
+$env:AWS_REGION = "ap-southeast-2"
+aws sts get-caller-identity
+az account set --subscription 6932a700-63c2-4df8-8964-c5e0e2b906e2
+az account show --query "{subscription:id,tenant:tenantId,user:user.name}" -o table
+```
+
+macOS：
+
+```bash
+export AWS_PROFILE=pba-team
+export AWS_REGION=ap-southeast-2
+aws sts get-caller-identity
+az account set --subscription 6932a700-63c2-4df8-8964-c5e0e2b906e2
+az account show --query '{subscription:id,tenant:tenantId,user:user.name}' -o table
+```
+
+AWS Account 必须为 `983367475562`。凭据过期时按团队实际方式重新执行 `aws configure`/`aws sso login` 或 `az login`。学校 Conditional Access/VPN 阻止登录时，应在允许的网络完成认证，不要绕过策略。
+
+### 2. 发布前验证
 
 Windows：
 
@@ -250,15 +220,11 @@ bash scripts/test-frontend.sh
 bash scripts/validate-infra.sh
 ```
 
-`validate-infra` 会生成 Linux/Python 3.12 Lambda ZIP、运行 Terraform contract tests、执行 `fmt -check`、`init -backend=false -lockfile=readonly` 和 `validate`。它不会执行 `plan` 或 `apply`。
+`validate-infra` 构建 Linux/Python 3.12 Lambda ZIP、运行 contract tests、`fmt -check`、`init -backend=false -lockfile=readonly` 和 `validate`；不会运行 `plan/apply`。
 
-### 9.2 只修改前端
+### 3. AWS API Lambda
 
-使用上面的 `test-frontend` 脚本完成 test/build，再用 `start-local` 启动。当前前端是本地 Vite 页面，不发布到 AWS。
-
-### 9.3 修改 AWS API
-
-Lambda 当前为 `x86_64`。共享构建任务始终下载 `manylinux2014_x86_64`、CPython 3.12 wheels，不能把 Windows/macOS native site-packages 直接压入 ZIP。
+API Lambda 为 Python 3.12、`x86_64`。脚本会下载 Linux `manylinux2014_x86_64` wheels，不能直接打包 Windows/macOS native dependencies。
 
 Windows：
 
@@ -272,16 +238,13 @@ macOS：
 
 ```bash
 bash scripts/build-aws-api-package.sh
-aws lambda update-function-code \\
-  --function-name pacific-bioarchive-development-api \\
-  --zip-file fileb://build/aws-api.zip
-aws lambda wait function-updated \\
-  --function-name pacific-bioarchive-development-api
+aws lambda update-function-code --function-name pacific-bioarchive-development-api --zip-file fileb://build/aws-api.zip
+aws lambda wait function-updated --function-name pacific-bioarchive-development-api
 ```
 
-### 9.4 修改 Azure Function
+### 4. Azure Function
 
-每次修改 Azure Function 代码或 Python 依赖后，必须先重新生成白名单 staging 目录，再从该目录发布；不要直接从项目根目录执行 `func publish`，以免扫描本地测试文件、模型或权限受限目录。
+每次修改 Azure Function 代码或依赖后，**必须重新生成 staging，并从 staging 发布**。不要从项目根目录运行 `func publish`，否则会扫描测试、模型和权限受限的临时目录。
 
 Windows：
 
@@ -295,13 +258,12 @@ macOS：
 
 ```bash
 bash scripts/stage-azure-function.sh
-(cd build/azure-function-app && \\
-  func azure functionapp publish pacific-bioarchive-development-data-pba826 --python)
+(cd build/azure-function-app && func azure functionapp publish pacific-bioarchive-development-data-pba826 --python)
 ```
 
-### 9.5 修改 Worker 或 ML 模型
+### 5. Worker 镜像和模型
 
-Worker 需要 `mdv5a.pt`、`model.pt` 和 `labels.txt`。默认目录是项目根目录的 `models/`；也可传入其他目录。构建固定使用 `linux/amd64`，与 x86_64 Lambda 一致并兼容 Apple Silicon Mac。
+Worker 固定构建为 `linux/amd64`，与 Lambda architecture 一致并兼容 Apple Silicon。默认模型目录是仓库根目录的 `models/`，也可显式指定。
 
 Windows：
 
@@ -315,24 +277,28 @@ Windows：
 macOS：
 
 ```bash
-bash scripts/build-push-aws-worker-image.sh \\
-  983367475562.dkr.ecr.ap-southeast-2.amazonaws.com/pacific-bioarchive-development-media-worker \\
-  --tag ml-v2 \\
-  --model-directory <model-directory>
+bash scripts/build-push-aws-worker-image.sh \
+  983367475562.dkr.ecr.ap-southeast-2.amazonaws.com/pacific-bioarchive-development-media-worker \
+  --tag ml-v2 --model-directory <model-directory>
 ```
 
-脚本自行验证 AWS account、登录 ECR、推送镜像，并输出不可变的 `repository@sha256:digest`。然后更新 Worker：
+脚本输出 `repository@sha256:digest` 后更新 Worker：
 
-```powershell
+```bash
 aws lambda update-function-code --function-name pacific-bioarchive-development-media-worker --image-uri '<repository@sha256:digest>'
 aws lambda wait function-updated --function-name pacific-bioarchive-development-media-worker
 ```
 
-macOS 可使用同一 AWS CLI 命令并用反斜线换行。
+### 6. Terraform state 和变更规则
 
-### 9.6 更新 Terraform provider lockfile
+`terraform.tfstate` 与 `terraform.tfvars` 是本地敏感文件且不得提交。云资源已存在：
 
-只有 provider 版本约束改变时才运行。脚本同时记录 Windows x86_64、Intel Mac、Apple Silicon Mac 和 Linux x86_64 校验值：
+1. 普通代码发布只运行 `validate-infra`，不需要 `plan/apply`。
+2. 仅获授权成员在确认使用团队当前 state 和正确 tfvars 后才能生成 plan。
+3. apply 前必须审阅完整 plan，确认资源 ID、变更数量和所有 `destroy`。
+4. 不要 apply 旧 plan，不要在 state 缺失时重新创建资源。
+
+只有 provider 约束改变时才更新多平台 lockfile：
 
 ```powershell
 .\scripts\lock-terraform-providers.ps1
@@ -342,9 +308,7 @@ macOS 可使用同一 AWS CLI 命令并用反斜线换行。
 bash scripts/lock-terraform-providers.sh
 ```
 
-## 10. 云端健康检查
-
-检查 API 和 Azure Function：
+### 7. 部署后验证
 
 ```bash
 curl -i https://j85cs8gf3d.execute-api.ap-southeast-2.amazonaws.com/health
@@ -354,114 +318,26 @@ curl -i https://pacific-bioarchive-development-data-pba826.azurewebsites.net/hea
 检查 Worker：
 
 ```bash
-aws lambda invoke \\
-  --function-name pacific-bioarchive-development-media-worker \\
-  --cli-binary-format raw-in-base64-out \\
-  --payload '{"health_check":true}' \\
-  /tmp/pba-worker-health.json
-jq . /tmp/pba-worker-health.json
-
-aws lambda invoke \\
-  --function-name pacific-bioarchive-development-media-worker \\
-  --cli-binary-format raw-in-base64-out \\
-  --payload '{"model_check":true}' \\
-  /tmp/pba-worker-model.json
-jq . /tmp/pba-worker-model.json
+aws lambda invoke --function-name pacific-bioarchive-development-media-worker --cli-binary-format raw-in-base64-out --payload '{"health_check":true}' <output-file>
+aws lambda invoke --function-name pacific-bioarchive-development-media-worker --cli-binary-format raw-in-base64-out --payload '{"model_check":true}' <output-file>
 ```
 
-期望结果：
-
-```json
-{"status":"ok","database":"cosmos"}
-{"status":"ok","model":"loaded"}
-```
-
-查看 Worker 日志：
+必要时查看日志：
 
 ```bash
-aws logs tail \\
-  /aws/lambda/pacific-bioarchive-development-media-worker \\
-  --since 10m \\
-  --format short
+aws logs tail /aws/lambda/pacific-bioarchive-development-api --since 10m --format short
+aws logs tail /aws/lambda/pacific-bioarchive-development-media-worker --since 10m --format short
 ```
 
-查看 API 日志：
+### 8. 安全和提交检查
+
+不得提交或分享云密钥/密码/MFA、Cognito token、OAuth secret、Cosmos key、`terraform.tfvars`、`*.tfstate*`、`.env.local`、构建产物、模型权重或本地依赖目录。
+
+提交前运行：
 
 ```bash
-aws logs tail \\
-  /aws/lambda/pacific-bioarchive-development-api \\
-  --since 10m \\
-  --format short
-```
-
-## 11. 常见问题
-
-### 登录后回到登录页
-
-确认页面地址是 `http://localhost:5173`，不是 `5174`，并确认 `frontend/.env.local` 中的 API URL 正确。
-
-### 页面显示 API 请求失败
-
-先执行：
-
-```bash
-curl -i https://j85cs8gf3d.execute-api.ap-southeast-2.amazonaws.com/health
-```
-
-如果健康检查失败，检查 AWS API 状态和队友的网络连接。
-
-### 上传后一直是 Processing
-
-执行 Worker 的 `health_check` 和 `model_check`。如果 Worker 正常，再检查 Worker CloudWatch 日志和 SQS/DLQ。
-
-### 缩略图显示 unavailable
-
-等待几秒后点击 `Refresh library`。如果仍然没有缩略图，检查 Worker 日志和 S3 `derived/` 对象。
-
-### `401 Access token is invalid`
-
-退出后重新登录并重新执行操作。不要复制旧 token，也不要把 token 发到聊天中。
-
-### Azure 发布返回 403
-
-确认 Azure 账号有该 Subscription 或 Resource Group 的 Function App 发布权限，并使用允许的 Azure region。该错误不是前端代码错误。
-
-## 12. 测试完成标准
-
-队友完成以下项目后，可以认为本地页面和现有云端环境基本可用：
-
-- 登录、注册、验证邮箱、退出登录成功
-- 图片上传成功并生成缩略图
-- 视频上传成功并完成处理
-- 重复文件不会新增记录
-- Species 和 Tag counts 查询返回正确结果
-- 多标签查询使用 AND 逻辑
-- 上传文件查询不会永久保存查询文件
-- 手动标签可以批量添加、删除和查询
-- 测试媒体可以删除
-- 订阅记录可以创建、编辑、删除
-- SNS 邮箱确认成功，匹配标签后可以收到通知邮件
-- AWS API、Azure Function、Worker 健康检查通过
-
-如果通知验证失败，先检查订阅状态是否为 `Active`，再查看 API Lambda 日志和 SNS 订阅状态。
-
-## 13. 提交修改
-
-修改完成后先测试，再提交：
-
-```bash
-python -m pytest -q
-
-cd frontend
-npm test -- --run
-npm run build
-cd ..
-
-git status
+git status --short
 git diff --check
-git add frontend backend scripts infra TEAM_FRONTEND_RUNBOOK.md
-git commit -m "Describe and verify application changes"
-git push origin main
 ```
 
-不要使用 `git add .` 提交未经检查的本地配置或构建文件。
+只暂存本次确认过的文件，不要使用 `git add .` 将本地配置、state 或构建产物一并提交。
