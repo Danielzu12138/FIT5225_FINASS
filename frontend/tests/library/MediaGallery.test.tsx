@@ -149,7 +149,7 @@ test("supports bulk tag editing and deletion with per-item outcomes", async () =
   renderGallery(client([first, second], { updateTags, deleteMedia }));
 
   await screen.findByText("first.jpg");
-  fireEvent.click(screen.getByRole("button", { name: "Select visible" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select all visible media" }));
   expect(screen.getByText("2 selected")).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("Tags"), { target: { value: "Night, field_note" } });
   fireEvent.click(screen.getByRole("button", { name: "Add tags" }));
@@ -212,4 +212,30 @@ test("removes a card only after the single-delete outcome is deleted", async () 
 
   await waitFor(() => expect(screen.queryByText("ready.jpg")).not.toBeInTheDocument());
   expect(screen.getByRole("status")).toHaveTextContent("Media deleted.");
+});
+
+test("paginates ten rows, truncates manual tags, and resets pagination after filtering", async () => {
+  const results: MediaResult[] = Array.from({ length: 12 }, (_, index) => ({
+    media_id: `media-${index}`,
+    media_type: index === 11 ? "video" : "image",
+    status: "ready",
+    original_url: `https://downloads.example.test/originals/file-${index}.${index === 11 ? "mp4" : "jpg"}`,
+    thumbnail_url: null,
+    tag_counts: {},
+    manual_tags: index === 0 ? ["one", "two", "three", "four", "five"] : [],
+  }));
+  renderGallery(client(results));
+
+  expect(await screen.findByText("1–10 of 12")).toBeInTheDocument();
+  expect(screen.getByText("+2 more")).toBeInTheDocument();
+  expect(screen.queryByText("file-10.jpg")).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+  expect(await screen.findByText("11–12 of 12")).toBeInTheDocument();
+  expect(screen.getByText("file-10.jpg")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Videos 1" }));
+  expect(await screen.findByText("1–1 of 1")).toBeInTheDocument();
+  expect(screen.getByText("file-11.mp4")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Next page" })).not.toBeInTheDocument();
 });
