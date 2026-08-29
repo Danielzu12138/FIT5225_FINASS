@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AuthContext, type AuthContextValue } from "../../src/auth/AuthContext";
+import type { MediaResult } from "../../src/library/MediaGallery";
 import {
   ManagementPanel,
   type ManagementClient,
@@ -47,10 +48,10 @@ function client(overrides: Partial<ManagementClient> = {}): ManagementClient {
 }
 
 
-function renderPanel(api: ManagementClient) {
+function renderPanel(api: ManagementClient, libraryItems: MediaResult[] = []) {
   render(
     <AuthContext.Provider value={authValue()}>
-      <ManagementPanel client={api} />
+      <ManagementPanel client={api} libraryItems={libraryItems} />
     </AuthContext.Provider>,
   );
 }
@@ -66,6 +67,29 @@ async function query(api: ManagementClient) {
 
 
 describe("ManagementPanel", () => {
+  it("adds selected library records without requiring a query file", async () => {
+    const api = client();
+    const libraryRecord = {
+      media_id: "44444444-4444-4444-8444-444444444444",
+      media_type: "image" as const,
+      status: "ready" as const,
+      original_url: "https://downloads.example.test/originals/library-camera.jpg",
+      thumbnail_url: null,
+      tag_counts: { Casuarius_casuarius: 1 },
+      manual_tags: ["night_camera"],
+    };
+    renderPanel(api, [libraryRecord]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose library records" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /library-camera\.jpg/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Add selected records" }));
+
+    expect(screen.getByRole("status")).toHaveTextContent("1 library record(s) added");
+    expect(screen.getByRole("checkbox", { name: "Select library-camera.jpg" })).toBeChecked();
+    expect(screen.getByText("Casuarius casuarius: 1")).toBeInTheDocument();
+    expect(api.queryByFile).not.toHaveBeenCalled();
+  });
+
   it("queries with the shared auth token and renders selectable results", async () => {
     const api = client();
     await query(api);

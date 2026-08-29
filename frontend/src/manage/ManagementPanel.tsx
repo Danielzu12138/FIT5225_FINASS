@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { useAuth } from "../auth/AuthContext";
 import type { BulkDeleteResponse, TagUpdateResponse } from "../api/mediaTypes";
+import type { MediaResult } from "../library/MediaGallery";
 
 
 export interface ManagementResult {
@@ -20,8 +21,16 @@ export interface ManagementClient {
 }
 
 function resultName(result: ManagementResult): string {
-  const path = new URL(result.original_url).pathname;
-  return decodeURIComponent(path.split("/").at(-1) || result.media_id);
+  try {
+    const path = new URL(result.original_url).pathname;
+    return decodeURIComponent(path.split("/").at(-1) || result.media_id);
+  } catch {
+    return result.media_id;
+  }
+}
+
+function displayTag(value: string): string {
+  return value.replaceAll("_", " ");
 }
 
 function outcomeFor<T extends { media_id: string | null; url?: string }>(
@@ -39,7 +48,15 @@ function statusSummary(statuses: string[]): string {
 }
 
 
-export function ManagementPanel({ client }: { client: ManagementClient }) {
+export function ManagementPanel({
+  client,
+  libraryItems = [],
+  onLibraryChanged,
+}: {
+  client: ManagementClient;
+  libraryItems?: MediaResult[];
+  onLibraryChanged?(): Promise<void>;
+}) {
   const { accessToken } = useAuth();
   const [file, setFile] = useState<File | null>(null);
   const [results, setResults] = useState<ManagementResult[]>([]);
@@ -50,6 +67,17 @@ export function ManagementPanel({ client }: { client: ManagementClient }) {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [showLibraryPicker, setShowLibraryPicker] = useState(false);
+  const [librarySelected, setLibrarySelected] = useState<Set<string>>(new Set());
+
+  const libraryCandidates: ManagementResult[] = libraryItems.flatMap((item) => item.original_url ? [{
+    media_id: item.media_id,
+    media_type: item.media_type,
+    original_url: item.original_url,
+    thumbnail_url: item.thumbnail_url,
+    tag_counts: item.tag_counts,
+    manual_tags: item.manual_tags,
+  }] : []);
 
   const selectedUrls = results
     .filter((result) => selected.has(result.media_id))
@@ -81,6 +109,28 @@ export function ManagementPanel({ client }: { client: ManagementClient }) {
       else next.add(mediaId);
       return next;
     });
+  }
+
+  function toggleLibraryCandidate(mediaId: string) {
+    setLibrarySelected((current) => {
+      const next = new Set(current);
+      if (next.has(mediaId)) next.delete(mediaId);
+      else next.add(mediaId);
+      return next;
+    });
+  }
+
+  function addLibraryRecords() {
+    const additions = libraryCandidates.filter((item) => librarySelected.has(item.media_id));
+    const existing = new Set(results.map((item) => item.media_id));
+    const unique = additions.filter((item) => !existing.has(item.media_id));
+    setResults((current) => [...current, ...unique]);
+    setSelected((current) => new Set([...current, ...unique.map((item) => item.media_id)]));
+    setSearched(true);
+    setShowLibraryPicker(false);
+    setLibrarySelected(new Set());
+    setError(null);
+    setMessage(unique.length > 0 ? `${unique.length} library record(s) added to management.` : "Those records are already in management.");
   }
 
   async function update(operation: 0 | 1) {
@@ -120,6 +170,7 @@ export function ManagementPanel({ client }: { client: ManagementClient }) {
         const statuses = failed.map((outcome) => outcome?.status ?? "missing result");
         setError(`Tags were not updated for ${failed.length} item(s): ${statusSummary(statuses)}.`);
       }
+      if (succeeded > 0) await onLibraryChanged?.();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "The tag update failed");
     } finally {
@@ -152,6 +203,7 @@ export function ManagementPanel({ client }: { client: ManagementClient }) {
         const details = failed.map((outcome) => outcome?.error || outcome?.status || "missing result");
         setError(`Could not delete ${failed.length} item(s): ${details.join("; ")}`);
       }
+      if (deletedIds.size > 0) await onLibraryChanged?.();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "The deletion failed");
     } finally {
@@ -165,11 +217,47 @@ export function ManagementPanel({ client }: { client: ManagementClient }) {
         <div><p className="panel-kicker">Curate records</p><h2 id="management-heading">Media management</h2></div>
         <span className="panel-number" aria-hidden="true">04</span>
       </div>
-      <p className="panel-description">Upload a reference file to find similar records, then apply tags or delete selected items in one action.</p>
+      <p className="panel-description">Find related records with a reference file, or add records directly from your library, then manage them together.</p>
       <div className="management-search">
         <label htmlFor="query-file">Query file</label>
         <input id="query-file" type="file" accept="image/jpeg,image/png,video/mp4,video/quicktime,.mov" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
         <button type="button" disabled={!file || busy || !accessToken} onClick={() => void runQuery()}>Find matching media</button>
+      </div>
+
+      <div className="library-picker-section">
+        <div>
+          <strong>Add from your library</strong>
+          <span>{`${libraryCandidates.length} available record(s)`}</span>
+        </div>
+        <button type="button" className="secondary" disabled={libraryCandidates.length === 0} onClick={() => setShowLibraryPicker((current) => !current)}>
+          {showLibraryPicker ? "Close library" : "Choose library records"}
+        </button>
+        {showLibraryPicker && (
+          <div className="library-picker">
+            <div className="selection-toolbar">
+              <strong>{`${librarySelected.size} selected`}</strong>
+              <span>
+                <button type="button" className="button-link" onClick={() => setLibrarySelected(new Set(libraryCandidates.map((item) => item.media_id)))}>Select all</button>
+                <button type="button" className="button-link" onClick={() => setLibrarySelected(new Set())}>Clear</button>
+              </span>
+            </div>
+            <ul className="library-picker-list" aria-label="Library records available for management">
+              {libraryCandidates.map((result) => {
+                const name = resultName(result);
+                return (
+                  <li className={librarySelected.has(result.media_id) ? "selected" : ""} key={result.media_id}>
+                    <label>
+                      <input type="checkbox" checked={librarySelected.has(result.media_id)} onChange={() => toggleLibraryCandidate(result.media_id)} />
+                      {result.thumbnail_url ? <img src={result.thumbnail_url} alt="" /> : <img src={result.original_url} alt="" />}
+                      <span><strong>{name}</strong><small>{`ID: ${result.media_id.slice(0, 8)}`}</small></span>
+                    </label>
+                  </li>
+                );
+              })}
+            </ul>
+            <button type="button" disabled={librarySelected.size === 0} onClick={addLibraryRecords}>Add selected records</button>
+          </div>
+        )}
       </div>
 
       {error && <p role="alert">{error}</p>}
@@ -190,13 +278,13 @@ export function ManagementPanel({ client }: { client: ManagementClient }) {
               const name = resultName(result);
               return (
                 <li className={selected.has(result.media_id) ? "selected" : ""} key={result.media_id}>
-                  {result.thumbnail_url ? <img src={result.thumbnail_url} alt="" /> : <span className="management-placeholder" aria-hidden="true">◇</span>}
+                  <img src={result.thumbnail_url ?? result.original_url} alt="" />
                   <div className="management-record">
                     <label><input type="checkbox" checked={selected.has(result.media_id)} onChange={() => toggle(result.media_id)} />{`Select ${name}`}</label>
                     <a href={result.original_url} target="_blank" rel="noreferrer">{`Open ${name}`}</a>
                     <div className="tag-list">
-                      {Object.entries(result.tag_counts).map(([tag, count]) => <span className="tag-chip" key={`detected-${tag}`}>{`${tag}: ${count}`}</span>)}
-                      {(result.manual_tags ?? []).map((tag) => <span className="tag-chip tag-chip-manual" key={`manual-${tag}`}>{`${tag} · manual`}</span>)}
+                      {Object.entries(result.tag_counts).map(([tag, count]) => <span className="tag-chip" key={`detected-${tag}`}>{`${displayTag(tag)}: ${count}`}</span>)}
+                      {(result.manual_tags ?? []).map((tag) => <span className="tag-chip tag-chip-manual" key={`manual-${tag}`}>{`${displayTag(tag)} · manual`}</span>)}
                     </div>
                   </div>
                 </li>
