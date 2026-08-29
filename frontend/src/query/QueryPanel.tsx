@@ -8,7 +8,6 @@ export type QueryMode = "tags" | "species" | "thumbnail";
 
 export interface QueryResult {
   media_id: string;
-  file_name?: string | null;
   media_type: "image" | "video";
   status: MediaResult["status"];
   original_url: string | null;
@@ -41,7 +40,6 @@ function displaySpecies(value: string): string {
 }
 
 function resultName(result: QueryResult): string {
-  if (result.file_name) return result.file_name;
   if (result.original_url) {
     try {
       const path = new URL(result.original_url).pathname;
