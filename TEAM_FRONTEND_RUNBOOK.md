@@ -147,7 +147,7 @@ bash scripts/start-local.sh
 ### 8.1 登录和退出
 
 1. 点击 `Create an account`。
-2. 使用队友自己的邮箱和密码注册，并填写 Cognito 页面实际显示的资料字段。
+2. 使用队友自己的邮箱和密码注册，并在项目注册页填写 `Given name` 和 `Family name`；这些值作为 Cognito 标准属性提交。
 3. 在邮箱中输入 Cognito 验证码。
 4. 返回登录页面并登录。
 5. 如果首次登录跳转到 `/profile`，填写 `Given name` 和 `Family name`，点击 `Save and continue`。
@@ -155,9 +155,27 @@ bash scripts/start-local.sh
 7. 点击 `Sign out`，确认返回登录页。
 8. 再次登录，确认会话恢复正常且不会重复要求姓名。
 
+外部登录按钮只应在对应 Cognito provider 已成功部署后由 `/auth/config` 返回。当前 Terraform state 尚未确认，不要为了启用按钮执行 `terraform apply`。state 恢复并由团队完成 Google provider 注册/部署后，先完成一次浏览器 consent 和登录，再运行以下只读检查：
+
+```powershell
+python scripts\check_external_provider.py `
+  --user-pool-id <pool-id> --app-client-id <client-id> `
+  --provider Google --region ap-southeast-2 --require-user
+```
+
+macOS 在已激活的 Python 3.12 环境中运行：
+
+```bash
+python scripts/check_external_provider.py \
+  --user-pool-id <pool-id> --app-client-id <client-id> \
+  --provider Google --region ap-southeast-2 --require-user
+```
+
+检查必须同时确认 provider、app client authorization-code flow、email/given_name/family_name mapping 和 `EXTERNAL_PROVIDER` 用户记录。人工证据应包含 Google consent、Cognito federated user、登录后的姓名/email claims，以及退出后再次登录；截图不得包含 token 或 client secret。
+
 ### 8.2 上传和去重
 
-准备一个小于 5 GB 的 `.jpg`、`.png`、`.mp4` 或 `.mov` 文件。
+准备 `.jpg`/`.png` 图片（最大 25 MiB）或 `.mp4`/`.mov` 视频（最大 512 MiB、最长 120 秒）。前端会在计算 checksum 和创建 reservation 前拒绝超限文件。
 
 1. 在 `Upload wildlife media` 中选择文件。
 2. 点击 `Upload to archive`。
@@ -263,18 +281,22 @@ aws lambda wait function-updated \\
 
 ### 9.4 修改 Azure Function
 
+每次修改 Azure Function 代码或 Python 依赖后，必须先重新生成白名单 staging 目录，再从该目录发布；不要直接从项目根目录执行 `func publish`，以免扫描本地测试文件、模型或权限受限目录。
+
 Windows：
 
 ```powershell
+.\scripts\stage-azure-function.ps1
+Set-Location build\azure-function-app
 func azure functionapp publish pacific-bioarchive-development-data-pba826 --python
 ```
 
 macOS：
 
 ```bash
-func azure functionapp publish \\
-  pacific-bioarchive-development-data-pba826 \\
-  --python
+bash scripts/stage-azure-function.sh
+(cd build/azure-function-app && \\
+  func azure functionapp publish pacific-bioarchive-development-data-pba826 --python)
 ```
 
 ### 9.5 修改 Worker 或 ML 模型

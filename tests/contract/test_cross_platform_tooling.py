@@ -30,6 +30,7 @@ def test_windows_and_macos_entrypoints_share_the_python_task_runner() -> None:
         "validate-infra",
         "build-aws-api-package",
         "build-aws-worker-package",
+        "stage-azure-function",
         "build-push-aws-worker-image",
         "lock-terraform-providers",
     )
@@ -68,3 +69,13 @@ def test_sensitive_local_and_terraform_files_are_ignored() -> None:
     gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
     for entry in (".env", ".env.local", "terraform.tfvars", "*.tfvars", "*.tfstate", "*.tfstate.*"):
         assert entry in gitignore
+
+
+def test_azure_function_package_excludes_local_and_large_artifacts() -> None:
+    ignored = (ROOT / ".funcignore").read_text(encoding="utf-8").splitlines()
+    for entry in ("build/", "frontend/", "infra/", "models/", "scripts/", "tests/", "tmp/"):
+        assert entry in ignored
+
+    tasks = (SCRIPTS / "project_tasks.py").read_text(encoding="utf-8")
+    assert 'copy_tree(PROJECT_ROOT / "backend", stage / "backend")' in tasks
+    assert 'for name in ("host.json", "function_app.py", "requirements.txt")' in tasks
