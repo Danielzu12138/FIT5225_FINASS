@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 
@@ -57,7 +58,7 @@ class OpenVideoSession(Protocol):
 
 
 class VideoBackend(Protocol):
-    def open(self, source: bytes, *, timeout_seconds: int) -> OpenVideoSession: ...
+    def open(self, source: Path, *, timeout_seconds: int) -> OpenVideoSession: ...
 
 
 class VideoProcessor:
@@ -65,8 +66,13 @@ class VideoProcessor:
         self._backend = backend
         self._limits = limits
 
-    def process(self, source: bytes) -> VideoProcessingResult:
-        if not source or len(source) > self._limits.max_input_bytes:
+    @property
+    def max_input_bytes(self) -> int:
+        return self._limits.max_input_bytes
+
+    def process(self, source: Path, *, size_bytes: int | None = None) -> VideoProcessingResult:
+        actual_size = source.stat().st_size if size_bytes is None else size_bytes
+        if actual_size < 1 or actual_size > self._limits.max_input_bytes:
             raise VideoProcessingError("VIDEO_SIZE_EXCEEDED", "Video byte size exceeds the configured limit")
 
         with self._backend.open(source, timeout_seconds=self._limits.timeout_seconds) as session:

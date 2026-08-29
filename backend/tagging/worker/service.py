@@ -123,7 +123,11 @@ class TaggingWorker:
         )
 
     def _record_failure(self, event: MediaPreparedEvent, cause: Exception) -> None:
+        if self._classified_error_type(cause) is TransientTaggingError:
+            self._raise_classified("tagging failed", cause, record=None)
         now = self._clock.now_utc()
+        detail = str(cause) or cause.__class__.__name__
+        failure_code = "TAGGING_INPUT_INVALID" if isinstance(cause, ValueError) else "TAGGING_INFERENCE_FAILED"
         failed_record = MediaRecord(
             media_id=event.media_id,
             owner_sub=event.owner_sub,
@@ -136,6 +140,8 @@ class TaggingWorker:
             manual_tags=[],
             model_version="unavailable",
             status="failed",
+            failure_code=failure_code,
+            failure_message=f"Tagging failed: {detail}"[:500],
             created_at=event.occurred_at,
             updated_at=now,
         )
@@ -167,13 +173,15 @@ class TaggingWorker:
         *,
         record: MediaRecord | None,
     ) -> None:
-        error_type: type[TaggingWorkerError]
-        if isinstance(cause, (TimeoutError, ConnectionError, OSError, KeyError)):
-            error_type = TransientTaggingError
-        else:
-            error_type = PermanentTaggingError
+        error_type = TaggingWorker._classified_error_type(cause)
         detail = str(cause) or cause.__class__.__name__
         raise error_type(f"{context}: {detail}", record=record) from cause
+
+    @staticmethod
+    def _classified_error_type(cause: Exception) -> type[TaggingWorkerError]:
+        if isinstance(cause, (TimeoutError, ConnectionError, OSError, KeyError)):
+            return TransientTaggingError
+        return PermanentTaggingError
 
     @staticmethod
     def _validate_shape(event: MediaPreparedEvent) -> None:

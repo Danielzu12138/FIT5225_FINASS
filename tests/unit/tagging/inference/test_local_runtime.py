@@ -1,8 +1,10 @@
 import os
 from pathlib import Path
 
+import backend.tagging.inference.local_runtime as local_runtime
 from backend.common.providers.fakes import InMemoryObjectStorage
 from backend.common.providers.interfaces import InferenceResult
+from backend.tagging.inference.manifest import LoadedModelBundle
 from backend.tagging.inference.local_runtime import (
     LocalWildlifeInferenceService,
     _load_labels,
@@ -37,6 +39,49 @@ def test_service_reads_storage_and_reuses_one_runtime(tmp_path: Path) -> None:
         [("s3://media/temporary-query/one.jpg", b"image")],
         [("s3://media/temporary-query/one.jpg", b"image")],
     ]
+
+
+def test_manifest_bundle_configures_runtime_paths_and_version(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    detector = tmp_path / "detector"
+    classifier = tmp_path / "classifier"
+    labels = tmp_path / "labels"
+    for path in (detector, classifier, labels):
+        path.write_bytes(b"artifact")
+    bundle = LoadedModelBundle(
+        model_version="2.0.0",
+        detector_path=detector,
+        classifier_path=classifier,
+        labels_path=labels,
+        labels=("Dingo",),
+        input_width=320,
+        input_height=256,
+        detection_threshold=0.2,
+        classification_threshold=0.6,
+        device="cpu",
+    )
+    captured: dict[str, object] = {}
+    runtime = RecordingRuntime()
+
+    def build_runtime(**kwargs: object) -> RecordingRuntime:
+        captured.update(kwargs)
+        return runtime
+
+    monkeypatch.setattr(local_runtime, "TorchWildlifeRuntime", build_runtime)
+    service = LocalWildlifeInferenceService.from_manifest_bundle(
+        storage=InMemoryObjectStorage(),
+        bundle=bundle,
+    )
+
+    assert service._get_runtime() is runtime
+    assert captured["detector_path"] == detector
+    assert captured["classifier_path"] == classifier
+    assert captured["labels_path"] == labels
+    assert captured["model_version"] == "2.0.0"
+    assert captured["input_width"] == 320
+    assert captured["input_height"] == 256
 
 
 def test_taxonomy_file_maps_to_classifier_species_names(tmp_path: Path) -> None:

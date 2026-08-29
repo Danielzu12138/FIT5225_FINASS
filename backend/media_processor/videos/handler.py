@@ -1,15 +1,18 @@
 from __future__ import annotations
 
-import hashlib
+import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal, Protocol
 from urllib.parse import unquote_plus
 from uuid import UUID
 
 from backend.common.contracts.models import MediaPreparedEvent
+from backend.common.media_limits import MAX_VIDEO_BYTES
 from backend.common.providers.interfaces import Clock, EventPublisher, IdGenerator, ObjectStorage
 
 from .processing import VideoProcessingError, VideoProcessor
+from .streaming import stream_object_to_path
 
 
 VideoStatus = Literal["reserved", "uploaded", "processing", "prepared", "failed"]
@@ -30,6 +33,7 @@ class ObjectHead:
     content_type: str
     metadata: dict[str, str]
     version_id: str | None = None
+    content_length: int | None = None
 
 
 class VideoReservationStore(Protocol):
@@ -115,16 +119,17 @@ class VideoEventHandler:
                 )
                 return "failed"
 
-            source = self._storage.get_bytes(key)
-            if self._recompute_checksum and hashlib.sha256(source).hexdigest() != reservation.sha256:
-                self._reservations.mark_failed(
-                    reservation.media_id,
-                    "VIDEO_CHECKSUM_MISMATCH",
-                    "Uploaded video checksum does not match its reservation",
+            with tempfile.TemporaryDirectory(prefix="pba-video-") as temporary:
+                source_path = Path(temporary) / "source.video"
+                size_bytes, _ = stream_object_to_path(
+                    self._storage,
+                    key,
+                    source_path,
+                    max_bytes=getattr(self._processor, "max_input_bytes", MAX_VIDEO_BYTES),
+                    expected_size=head.content_length,
+                    expected_sha256=(reservation.sha256 if self._recompute_checksum else None),
                 )
-                return "failed"
-
-            result = self._processor.process(source)
+                result = self._processor.process(source_path, size_bytes=size_bytes)
             frame_keys = [
                 f"derived/{derived_partition}/frames/{timestamp:06d}.jpg"
                 for timestamp in result.timestamps

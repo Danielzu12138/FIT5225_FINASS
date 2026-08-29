@@ -63,8 +63,9 @@ class RaisingProcessor:
     def __init__(self, error: BaseException) -> None:
         self.error = error
 
-    def process(self, source: bytes):
-        del source
+    def process(self, source, *, size_bytes: int | None = None):
+        assert source.read_bytes() == b"video-source"
+        assert size_bytes == len(b"video-source")
         raise self.error
 
 

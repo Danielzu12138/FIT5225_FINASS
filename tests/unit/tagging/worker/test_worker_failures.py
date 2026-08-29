@@ -92,6 +92,8 @@ def test_video_without_prepared_frames_records_permanent_failure() -> None:
     assert failed == captured.value.record
     assert failed is not None
     assert failed.status == "failed"
+    assert failed.failure_code == "TAGGING_INPUT_INVALID"
+    assert failed.failure_message == "Tagging failed: video requires at least one prepared frame"
     assert failed.tag_counts == {}
     assert failed.model_version == "unavailable"
     assert failed.updated_at == NOW
@@ -122,9 +124,8 @@ def test_missing_prepared_object_is_transient_and_retry_can_complete() -> None:
         worker.process(event)
 
     assert captured.value.retry_classification is RetryClassification.TRANSIENT
-    assert captured.value.record is not None
-    assert captured.value.record.status == "failed"
-    assert repository.get("owner-123", MEDIA_ID) == captured.value.record
+    assert captured.value.record is None
+    assert repository.get("owner-123", MEDIA_ID) is None
     assert publisher.events == []
 
     storage.put_bytes("originals/a/camera.jpg", b"image", content_type="image/jpeg")

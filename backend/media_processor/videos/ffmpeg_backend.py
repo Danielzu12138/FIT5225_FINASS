@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
-import tempfile
 import time
 from pathlib import Path
 from types import TracebackType
@@ -18,7 +17,7 @@ class FfmpegVideoBackend:
         self._ffmpeg = ffmpeg
         self._ffprobe = ffprobe
 
-    def open(self, source: bytes, *, timeout_seconds: int) -> "FfmpegVideoSession":
+    def open(self, source: Path, *, timeout_seconds: int) -> "FfmpegVideoSession":
         return FfmpegVideoSession(
             source=source,
             timeout_seconds=timeout_seconds,
@@ -31,17 +30,15 @@ class FfmpegVideoSession:
     def __init__(
         self,
         *,
-        source: bytes,
+        source: Path,
         timeout_seconds: int,
         ffmpeg: str,
         ffprobe: str,
     ) -> None:
-        self._source = source
+        self._source_path = source
         self._timeout_seconds = timeout_seconds
         self._ffmpeg_name = ffmpeg
         self._ffprobe_name = ffprobe
-        self._temporary: tempfile.TemporaryDirectory[str] | None = None
-        self._source_path: Path | None = None
         self._deadline: float | None = None
 
     def __enter__(self) -> "FfmpegVideoSession":
@@ -54,10 +51,8 @@ class FfmpegVideoSession:
             )
         self._ffmpeg_name = ffmpeg
         self._ffprobe_name = ffprobe
-        self._temporary = tempfile.TemporaryDirectory(prefix="pba-video-")
-        self._source_path = Path(self._temporary.name) / "source.video"
-        self._source_path.write_bytes(self._source)
-        self._source = b""
+        if not self._source_path.is_file():
+            raise VideoProcessingError("VIDEO_CORRUPT", "Uploaded video file is unavailable")
         self._deadline = time.monotonic() + self._timeout_seconds
         return self
 
@@ -68,10 +63,6 @@ class FfmpegVideoSession:
         traceback: TracebackType | None,
     ) -> None:
         del exc_type, exc, traceback
-        if self._temporary is not None:
-            self._temporary.cleanup()
-        self._temporary = None
-        self._source_path = None
         self._deadline = None
 
     def probe(self) -> VideoProbe:
@@ -177,7 +168,7 @@ class FfmpegVideoSession:
         return remaining
 
     def _require_open_source(self) -> Path:
-        if self._source_path is None:
+        if not self._source_path.is_file():
             raise RuntimeError("video session is not open")
         return self._source_path
 

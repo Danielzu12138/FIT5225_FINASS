@@ -28,21 +28,22 @@ def test_ffmpeg_session_probes_and_extracts_frames(monkeypatch, tmp_path: Path) 
 
     monkeypatch.setattr("shutil.which", fake_which)
     monkeypatch.setattr("subprocess.run", fake_run)
-    session = FfmpegVideoBackend().open(b"video-bytes", timeout_seconds=10)
+    source = tmp_path / "video.mp4"
+    source.write_bytes(b"video-bytes")
+    session = FfmpegVideoBackend().open(source, timeout_seconds=10)
 
     with session:
         assert session.probe().container == "mp4"
         assert session.extract_frames((0, 1)) == [b"jpeg-frame", b"jpeg-frame"]
-        source_files = list(Path(session._temporary.name).iterdir())  # type: ignore[union-attr]
-        assert source_files and source_files[0].read_bytes() == b"video-bytes"
-
-    assert session._temporary is None
+        assert session._source_path == source
     assert len(commands) == 3
 
 
-def test_ffmpeg_session_reports_missing_tools(monkeypatch) -> None:
+def test_ffmpeg_session_reports_missing_tools(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("shutil.which", lambda _name: None)
-    session = FfmpegVideoBackend().open(b"video", timeout_seconds=10)
+    source = tmp_path / "video.mp4"
+    source.write_bytes(b"video")
+    session = FfmpegVideoBackend().open(source, timeout_seconds=10)
 
     with pytest.raises(VideoProcessingError) as raised:
         session.__enter__()
@@ -50,14 +51,16 @@ def test_ffmpeg_session_reports_missing_tools(monkeypatch) -> None:
     assert raised.value.code == "VIDEO_BACKEND_UNAVAILABLE"
 
 
-def test_ffmpeg_session_maps_command_timeout(monkeypatch) -> None:
+def test_ffmpeg_session_maps_command_timeout(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("shutil.which", lambda name: f"/usr/bin/{name}")
 
     def timeout(*args, **kwargs):
         raise subprocess.TimeoutExpired(kwargs.get("args", args[0]), 1)
 
     monkeypatch.setattr("subprocess.run", timeout)
-    session = FfmpegVideoBackend().open(b"video", timeout_seconds=10)
+    source = tmp_path / "video.mp4"
+    source.write_bytes(b"video")
+    session = FfmpegVideoBackend().open(source, timeout_seconds=10)
     with session:
         with pytest.raises(VideoProcessingError) as raised:
             session.probe()

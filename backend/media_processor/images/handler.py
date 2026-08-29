@@ -35,6 +35,7 @@ class ObjectHead:
     content_type: str
     metadata: dict[str, str]
     version_id: str | None = None
+    content_length: int | None = None
 
 
 class ImageReservationStore(Protocol):
@@ -100,7 +101,23 @@ class ImageEventHandler:
             return "duplicate"
 
         try:
+            if head.content_length is not None and (
+                head.content_length < 1 or head.content_length > self._thumbnailer.max_input_bytes
+            ):
+                self._reservations.mark_failed(
+                    reservation.media_id,
+                    "IMAGE_SIZE_INVALID",
+                    "Image byte size is outside the configured limit",
+                )
+                return "failed"
             source = self._storage.get_bytes(key)
+            if head.content_length is not None and len(source) != head.content_length:
+                self._reservations.mark_failed(
+                    reservation.media_id,
+                    "IMAGE_CONTENT_LENGTH_MISMATCH",
+                    "Downloaded image size does not match S3 ContentLength",
+                )
+                return "failed"
             return self._process_claimed_event(
                 reservation=reservation,
                 key=key,
