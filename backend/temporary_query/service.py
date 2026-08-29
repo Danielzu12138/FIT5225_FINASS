@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from pathlib import PurePath
+import tempfile
+from pathlib import Path, PurePath
 from uuid import UUID
 
 from backend.common.contracts.models import QueryResponse, QueryResult
@@ -78,7 +79,10 @@ class TemporaryQueryService:
                 if self._video_processor is None and not self._defer_video_processing:
                     raise TemporaryFileValidationError("video query processing is not configured")
                 if self._video_processor is not None:
-                    video = self._video_processor.process(data)
+                    with tempfile.TemporaryDirectory(prefix="pba-local-query-") as temporary:
+                        source_path = Path(temporary) / "source.video"
+                        source_path.write_bytes(data)
+                        video = self._video_processor.process(source_path, size_bytes=len(data))
                     inference_uris = []
                     for timestamp, frame in zip(video.timestamps, video.frames, strict=True):
                         frame_key = f"temporary-query/{request_id}/frames/{timestamp:06d}.jpg"
@@ -157,6 +161,8 @@ class TemporaryQueryService:
             ),
             tag_counts=record.tag_counts,
             manual_tags=record.manual_tags,
+            failure_code=record.failure_code,
+            failure_message=record.failure_message,
         )
 
     def _object_key(self, storage_uri: str) -> str:

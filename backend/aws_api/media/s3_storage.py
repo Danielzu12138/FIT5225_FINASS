@@ -18,6 +18,17 @@ class S3Storage(ObjectStorage):
     def get_bytes(self, key: str) -> bytes:
         return self._client.get_object(Bucket=self._bucket, Key=key)["Body"].read()
 
+    def iter_bytes(self, key: str, *, chunk_size: int):
+        body = self._client.get_object(Bucket=self._bucket, Key=key)["Body"]
+        try:
+            for chunk in body.iter_chunks(chunk_size=chunk_size):
+                if chunk:
+                    yield chunk
+        finally:
+            close = getattr(body, "close", None)
+            if close is not None:
+                close()
+
     def list_keys(self, prefix: str) -> list[str]:
         paginator = self._client.get_paginator("list_objects_v2")
         return [

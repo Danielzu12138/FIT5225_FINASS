@@ -24,6 +24,41 @@ def test_upload_request_rejects_non_lowercase_sha256() -> None:
         )
 
 
+def test_upload_request_enforces_distinct_image_and_video_limits() -> None:
+    models = models_module()
+    limits = importlib.import_module("backend.common.media_limits")
+
+    image = models.UploadReservationRequest(
+        file_name="image.jpg",
+        media_type="image",
+        size_bytes=limits.MAX_IMAGE_BYTES,
+        sha256="a" * 64,
+    )
+    video = models.UploadReservationRequest(
+        file_name="video.mp4",
+        media_type="video",
+        size_bytes=limits.MAX_VIDEO_BYTES,
+        sha256="b" * 64,
+    )
+    assert image.size_bytes == limits.MAX_IMAGE_BYTES
+    assert video.size_bytes == limits.MAX_VIDEO_BYTES
+
+    with pytest.raises(ValidationError):
+        models.UploadReservationRequest(
+            file_name="image.jpg",
+            media_type="image",
+            size_bytes=limits.MAX_IMAGE_BYTES + 1,
+            sha256="c" * 64,
+        )
+    with pytest.raises(ValidationError):
+        models.UploadReservationRequest(
+            file_name="video.mp4",
+            media_type="video",
+            size_bytes=limits.MAX_VIDEO_BYTES + 1,
+            sha256="d" * 64,
+        )
+
+
 def test_duplicate_response_requires_null_upload_fields() -> None:
     models = models_module()
 
@@ -106,3 +141,31 @@ def test_tag_query_requires_positive_counts() -> None:
     assert models.TagQuery.model_validate({"wombat": 2}).root == {"wombat": 2}
     with pytest.raises(ValidationError):
         models.TagQuery.model_validate({"wombat": 0})
+
+
+def test_media_failure_diagnostics_are_bounded_and_structured() -> None:
+    models = models_module()
+    now = datetime(2026, 8, 22, 4, 0, tzinfo=UTC)
+    values = {
+        "media_id": UUID("22222222-2222-4222-8222-222222222222"),
+        "owner_sub": "owner",
+        "sha256": "a" * 64,
+        "file_name": "camera.jpg",
+        "media_type": "image",
+        "original_storage_uri": "s3://media/original.jpg",
+        "thumbnail_storage_uri": None,
+        "tag_counts": {},
+        "manual_tags": [],
+        "model_version": "pending",
+        "status": "failed",
+        "failure_code": "IMAGE_CORRUPT",
+        "failure_message": "Image could not be decoded",
+        "created_at": now,
+        "updated_at": now,
+    }
+
+    assert models.MediaRecord.model_validate(values).failure_code == "IMAGE_CORRUPT"
+    with pytest.raises(ValidationError):
+        models.MediaRecord.model_validate({**values, "failure_code": "bad-code"})
+    with pytest.raises(ValidationError):
+        models.MediaRecord.model_validate({**values, "failure_message": "x" * 501})

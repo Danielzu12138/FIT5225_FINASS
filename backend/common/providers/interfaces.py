@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from collections.abc import Iterable
 from typing import Protocol
 from uuid import UUID
 
@@ -23,13 +24,20 @@ class InferenceResult:
 class ObjectStorage(Protocol):
     def put_bytes(self, key: str, data: bytes, *, content_type: str) -> None: ...
     def get_bytes(self, key: str) -> bytes: ...
+    def iter_bytes(self, key: str, *, chunk_size: int) -> Iterable[bytes]: ...
     def list_keys(self, prefix: str) -> list[str]: ...
     def delete_keys(self, keys: list[str]) -> None: ...
     def exists(self, key: str) -> bool: ...
 
 
 class MediaRepository(Protocol):
-    def reserve_upload(self, owner_sub: str, sha256: str, media_id: UUID) -> ReservationResult: ...
+    def reserve_upload(
+        self,
+        owner_sub: str,
+        sha256: str,
+        media_id: UUID,
+        expires_at: datetime | None = None,
+    ) -> ReservationResult: ...
     def release_upload_reservation(
         self, owner_sub: str, sha256: str, media_id: UUID | None = None
     ) -> bool: ...

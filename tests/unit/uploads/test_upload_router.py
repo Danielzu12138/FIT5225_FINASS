@@ -14,6 +14,7 @@ from backend.common.providers.fakes import (
     DeterministicObjectUrlSigner,
     FixedClock,
     InMemoryMediaRepository,
+    InMemoryObjectStorage,
     SequenceIdGenerator,
 )
 
@@ -31,6 +32,7 @@ def test_reservation_route_requires_auth_and_uses_cognito_owner() -> None:
     repository = InMemoryMediaRepository()
     service = uploads.UploadReservationService(
         repository=repository,
+        storage=InMemoryObjectStorage(),
         url_signer=DeterministicObjectUrlSigner(
             upload_base_url="https://uploads.example.test",
             download_base_url="https://downloads.example.test",
@@ -68,3 +70,18 @@ def test_reservation_route_requires_auth_and_uses_cognito_owner() -> None:
     assert response.json()["duplicate"] is False
     media_id = UUID(response.json()["media_id"])
     assert repository.get("owner-123", media_id) is not None
+
+    assert client.request(
+        "DELETE",
+        f"/uploads/reservations/{media_id}",
+        json={"sha256": "a" * 64},
+    ).status_code == 401
+    cancelled = client.request(
+        "DELETE",
+        f"/uploads/reservations/{media_id}",
+        json={"sha256": "a" * 64},
+        headers={"Authorization": "Bearer valid-token"},
+    )
+    assert cancelled.status_code == 200
+    assert cancelled.json() == {"media_id": str(media_id), "status": "cancelled"}
+    assert repository.get("owner-123", media_id) is None

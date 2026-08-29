@@ -202,8 +202,10 @@ def test_video_query_extracts_temporary_frames_and_cleans_all_objects(
     content_type: str,
 ) -> None:
     class VideoProcessor:
-        def process(self, data: bytes) -> VideoProcessingResult:
+        def process(self, source, *, size_bytes: int | None = None) -> VideoProcessingResult:
+            data = source.read_bytes()
             assert data[4:8] == b"ftyp"
+            assert size_bytes == len(data)
             return VideoProcessingResult(
                 probe=VideoProbe(2.0, "mp4", "h264", 640, 360),
                 timestamps=(0, 1),

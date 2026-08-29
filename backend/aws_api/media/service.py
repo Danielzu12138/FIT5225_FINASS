@@ -52,6 +52,8 @@ class MediaLibraryService:
             ),
             tag_counts=record.tag_counts,
             manual_tags=record.manual_tags,
+            failure_code=record.failure_code,
+            failure_message=record.failure_message,
         )
 
     @staticmethod

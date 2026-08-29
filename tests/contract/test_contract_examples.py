@@ -31,6 +31,7 @@ CONTRACT_NAMES = (
 
 REQUIRED_ROUTES = {
     "/uploads/reservations": {"post"},
+    "/uploads/reservations/{media_id}": {"delete"},
     "/queries/tags": {"post"},
     "/queries/species": {"post"},
     "/queries/thumbnail": {"post"},

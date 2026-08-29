@@ -16,6 +16,8 @@ from pydantic import (
     model_validator,
 )
 
+from backend.common.media_limits import MAX_VIDEO_BYTES, max_bytes_for
+
 
 Sha256 = Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")]
 StorageUri = Annotated[str, StringConstraints(pattern=r"^s3://[^/]+/.+")]
@@ -45,8 +47,14 @@ class UploadReservationRequest(StrictModel):
         StringConstraints(min_length=1, max_length=255, pattern=r"^[^/\\]+$"),
     ]
     media_type: Literal["image", "video"]
-    size_bytes: Annotated[int, Field(ge=1, le=5_368_709_120)]
+    size_bytes: Annotated[int, Field(ge=1, le=MAX_VIDEO_BYTES)]
     sha256: Sha256
+
+    @model_validator(mode="after")
+    def enforce_media_size_limit(self) -> "UploadReservationRequest":
+        if self.size_bytes > max_bytes_for(self.media_type):
+            raise ValueError(f"{self.media_type} exceeds its configured upload limit")
+        return self
 
 
 class UploadReservationResponse(StrictModel):
@@ -78,6 +86,15 @@ class UploadReservationResponse(StrictModel):
             if not re.fullmatch(r"[a-f0-9]{64}", self.upload_headers["x-amz-meta-sha256"]):
                 raise ValueError("signed upload sha256 metadata is invalid")
         return self
+
+
+class UploadReservationCancelRequest(StrictModel):
+    sha256: Sha256
+
+
+class UploadReservationCancelResponse(StrictModel):
+    media_id: UUID
+    status: Literal["cancelled", "already_cancelled"]
 
 
 class MediaPreparedEvent(StrictModel):
@@ -119,8 +136,21 @@ class MediaRecord(StrictModel):
     manual_tags: list[SpeciesName]
     model_version: Annotated[str, StringConstraints(min_length=1, max_length=128)]
     status: Literal["reserved", "uploaded", "processing", "prepared", "ready", "deleting", "failed"]
+    expires_at: datetime | None = None
+    failure_code: Annotated[
+        str,
+        StringConstraints(pattern=r"^[A-Z][A-Z0-9_]{2,63}$"),
+    ] | None = None
+    failure_message: Annotated[str, StringConstraints(min_length=1, max_length=500)] | None = None
     created_at: datetime
     updated_at: datetime
+
+    @field_validator("expires_at")
+    @classmethod
+    def require_timezone_for_expiry(cls, value: datetime | None) -> datetime | None:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("expires_at must include a timezone")
+        return value
 
     @field_validator("manual_tags")
     @classmethod
@@ -170,6 +200,11 @@ class QueryResult(StrictModel):
     thumbnail_url: HttpUrl | None
     tag_counts: dict[SpeciesName, Annotated[int, Field(ge=1)]]
     manual_tags: list[SpeciesName] = Field(default_factory=list)
+    failure_code: Annotated[
+        str,
+        StringConstraints(pattern=r"^[A-Z][A-Z0-9_]{2,63}$"),
+    ] | None = None
+    failure_message: Annotated[str, StringConstraints(min_length=1, max_length=500)] | None = None
 
 
 class QueryResponse(StrictModel):
