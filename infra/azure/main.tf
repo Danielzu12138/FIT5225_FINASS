@@ -111,7 +111,6 @@ resource "azurerm_cosmosdb_sql_container" "media" {
   indexing_policy {
     indexing_mode = "consistent"
     included_path { path = "/*" }
-    excluded_path { path = "/\"_etag\"/?" }
   }
 }
 
@@ -158,7 +157,8 @@ resource "azurerm_linux_function_app" "data_api" {
   }
 
   site_config {
-    minimum_tls_version = "1.2"
+    minimum_tls_version                    = "1.2"
+    application_insights_connection_string = azurerm_application_insights.functions.connection_string
     application_stack {
       python_version = "3.12"
     }
@@ -168,23 +168,22 @@ resource "azurerm_linux_function_app" "data_api" {
   }
 
   app_settings = {
-    "FUNCTIONS_WORKER_RUNTIME"              = "python"
-    "AzureWebJobsFeatureFlags"              = "EnableWorkerIndexing"
-    "SCM_DO_BUILD_DURING_DEPLOYMENT"        = "true"
-    "ENABLE_ORYX_BUILD"                     = "true"
-    "APPLICATIONINSIGHTS_CONNECTION_STRING" = azurerm_application_insights.functions.connection_string
-    "COSMOS_ENDPOINT"                       = azurerm_cosmosdb_account.main.endpoint
-    "COSMOS_DATABASE"                       = azurerm_cosmosdb_sql_database.main.name
-    "COSMOS_MEDIA_CONTAINER"                = azurerm_cosmosdb_sql_container.media.name
-    "COSMOS_SUBSCRIPTIONS_CONTAINER"        = azurerm_cosmosdb_sql_container.subscriptions.name
-    "COSMOS_DELIVERY_LEDGER_CONTAINER"      = azurerm_cosmosdb_sql_container.delivery_ledger.name
-    "COSMOS_DELETION_OPERATIONS_CONTAINER"  = azurerm_cosmosdb_sql_container.deletion_operations.name
-    "AWS_REGION"                            = "ap-southeast-2"
-    "COGNITO_USER_POOL_ID"                  = split("/", var.cognito_issuer)[3]
-    "COGNITO_ISSUER"                        = var.cognito_issuer
-    "COGNITO_APP_CLIENT_ID"                 = var.cognito_app_client_id
-    "AWS_MEDIA_BUCKET"                      = var.aws_media_bucket
-    "KEY_VAULT_URI"                         = azurerm_key_vault.main.vault_uri
+    "FUNCTIONS_WORKER_RUNTIME"             = "python"
+    "AzureWebJobsFeatureFlags"             = "EnableWorkerIndexing"
+    "SCM_DO_BUILD_DURING_DEPLOYMENT"       = "true"
+    "ENABLE_ORYX_BUILD"                    = "true"
+    "COSMOS_ENDPOINT"                      = azurerm_cosmosdb_account.main.endpoint
+    "COSMOS_DATABASE"                      = azurerm_cosmosdb_sql_database.main.name
+    "COSMOS_MEDIA_CONTAINER"               = azurerm_cosmosdb_sql_container.media.name
+    "COSMOS_SUBSCRIPTIONS_CONTAINER"       = azurerm_cosmosdb_sql_container.subscriptions.name
+    "COSMOS_DELIVERY_LEDGER_CONTAINER"     = azurerm_cosmosdb_sql_container.delivery_ledger.name
+    "COSMOS_DELETION_OPERATIONS_CONTAINER" = azurerm_cosmosdb_sql_container.deletion_operations.name
+    "AWS_REGION"                           = "ap-southeast-2"
+    "COGNITO_USER_POOL_ID"                 = split("/", var.cognito_issuer)[3]
+    "COGNITO_ISSUER"                       = var.cognito_issuer
+    "COGNITO_APP_CLIENT_ID"                = var.cognito_app_client_id
+    "AWS_MEDIA_BUCKET"                     = var.aws_media_bucket
+    "KEY_VAULT_URI"                        = azurerm_key_vault.main.vault_uri
   }
 }
 
@@ -200,19 +199,87 @@ resource "azurerm_role_assignment" "function_key_vault" {
   principal_id         = azurerm_linux_function_app.data_api.identity[0].principal_id
 }
 
-resource "azurerm_cosmosdb_sql_role_assignment" "function_data" {
+resource "azurerm_cosmosdb_sql_role_definition" "component_reader" {
+  name                = "${local.name}-component-reader"
   resource_group_name = azurerm_resource_group.main.name
   account_name        = azurerm_cosmosdb_account.main.name
-  role_definition_id  = "${azurerm_cosmosdb_account.main.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002"
-  principal_id        = azurerm_linux_function_app.data_api.identity[0].principal_id
-  scope               = azurerm_cosmosdb_account.main.id
+  type                = "CustomRole"
+  assignable_scopes   = [azurerm_cosmosdb_account.main.id]
+
+  permissions {
+    data_actions = [
+      "Microsoft.DocumentDB/databaseAccounts/readMetadata",
+      "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/executeQuery",
+      "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/items/read",
+    ]
+  }
 }
 
-resource "azurerm_cosmosdb_sql_role_assignment" "worker_data" {
+resource "azurerm_cosmosdb_sql_role_definition" "component_writer" {
+  name                = "${local.name}-component-writer"
+  resource_group_name = azurerm_resource_group.main.name
+  account_name        = azurerm_cosmosdb_account.main.name
+  type                = "CustomRole"
+  assignable_scopes   = [azurerm_cosmosdb_account.main.id]
+
+  permissions {
+    data_actions = [
+      "Microsoft.DocumentDB/databaseAccounts/readMetadata",
+      "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/executeQuery",
+      "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/items/read",
+      "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/items/create",
+      "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/items/replace",
+      "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/items/upsert",
+      "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/items/delete",
+    ]
+  }
+}
+
+locals {
+  cosmos_container_scopes = {
+    media               = "${azurerm_cosmosdb_account.main.id}/dbs/${azurerm_cosmosdb_sql_database.main.name}/colls/${azurerm_cosmosdb_sql_container.media.name}"
+    subscriptions       = "${azurerm_cosmosdb_account.main.id}/dbs/${azurerm_cosmosdb_sql_database.main.name}/colls/${azurerm_cosmosdb_sql_container.subscriptions.name}"
+    delivery_ledger     = "${azurerm_cosmosdb_account.main.id}/dbs/${azurerm_cosmosdb_sql_database.main.name}/colls/${azurerm_cosmosdb_sql_container.delivery_ledger.name}"
+    deletion_operations = "${azurerm_cosmosdb_account.main.id}/dbs/${azurerm_cosmosdb_sql_database.main.name}/colls/${azurerm_cosmosdb_sql_container.deletion_operations.name}"
+  }
+  api_cosmos_scopes = var.api_principal_id == null ? {} : local.cosmos_container_scopes
+  notification_cosmos_scopes = var.notification_principal_id == null ? {} : {
+    subscriptions   = local.cosmos_container_scopes.subscriptions
+    delivery_ledger = local.cosmos_container_scopes.delivery_ledger
+  }
+}
+
+resource "azurerm_cosmosdb_sql_role_assignment" "function_media_reader" {
+  resource_group_name = azurerm_resource_group.main.name
+  account_name        = azurerm_cosmosdb_account.main.name
+  role_definition_id  = azurerm_cosmosdb_sql_role_definition.component_reader.id
+  principal_id        = azurerm_linux_function_app.data_api.identity[0].principal_id
+  scope               = local.cosmos_container_scopes.media
+}
+
+resource "azurerm_cosmosdb_sql_role_assignment" "api_data" {
+  for_each            = local.api_cosmos_scopes
+  resource_group_name = azurerm_resource_group.main.name
+  account_name        = azurerm_cosmosdb_account.main.name
+  role_definition_id  = azurerm_cosmosdb_sql_role_definition.component_writer.id
+  principal_id        = var.api_principal_id
+  scope               = each.value
+}
+
+resource "azurerm_cosmosdb_sql_role_assignment" "worker_media_data" {
   count               = var.worker_principal_id == null ? 0 : 1
   resource_group_name = azurerm_resource_group.main.name
   account_name        = azurerm_cosmosdb_account.main.name
-  role_definition_id  = "${azurerm_cosmosdb_account.main.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002"
+  role_definition_id  = azurerm_cosmosdb_sql_role_definition.component_writer.id
   principal_id        = var.worker_principal_id
-  scope               = azurerm_cosmosdb_account.main.id
+  scope               = local.cosmos_container_scopes.media
+}
+
+resource "azurerm_cosmosdb_sql_role_assignment" "notification_data" {
+  for_each            = local.notification_cosmos_scopes
+  resource_group_name = azurerm_resource_group.main.name
+  account_name        = azurerm_cosmosdb_account.main.name
+  role_definition_id  = azurerm_cosmosdb_sql_role_definition.component_writer.id
+  principal_id        = var.notification_principal_id
+  scope               = each.value
 }

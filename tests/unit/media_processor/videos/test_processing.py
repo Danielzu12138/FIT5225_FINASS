@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+from pathlib import Path
 
 import pytest
 
@@ -37,9 +38,9 @@ class DeterministicSession:
 class DeterministicBackend:
     def __init__(self, session: DeterministicSession) -> None:
         self.session = session
-        self.open_calls: list[tuple[bytes, int]] = []
+        self.open_calls: list[tuple[Path, int]] = []
 
-    def open(self, source: bytes, *, timeout_seconds: int) -> DeterministicSession:
+    def open(self, source: Path, *, timeout_seconds: int) -> DeterministicSession:
         self.open_calls.append((source, timeout_seconds))
         return self.session
 
@@ -58,7 +59,7 @@ def limits(**changes: object):
     return module.VideoLimits(**values)
 
 
-def test_known_duration_extracts_exactly_one_frame_per_elapsed_second() -> None:
+def test_known_duration_extracts_exactly_one_frame_per_elapsed_second(tmp_path: Path) -> None:
     module = processing_module()
     probe = module.VideoProbe(
         duration_seconds=2.4,
@@ -70,13 +71,15 @@ def test_known_duration_extracts_exactly_one_frame_per_elapsed_second() -> None:
     session = DeterministicSession(probe, [b"frame-0", b"frame-1", b"frame-2"])
     backend = DeterministicBackend(session)
 
-    result = module.VideoProcessor(backend, limits()).process(b"tiny-video")
+    source = tmp_path / "video.mp4"
+    source.write_bytes(b"tiny-video")
+    result = module.VideoProcessor(backend, limits()).process(source)
 
     assert result.timestamps == (0, 1, 2)
     assert result.frames == (b"frame-0", b"frame-1", b"frame-2")
     assert result.representative_thumbnail == b"frame-0"
     assert session.requested_timestamps == (0, 1, 2)
-    assert backend.open_calls == [(b"tiny-video", 15)]
+    assert backend.open_calls == [(source, 15)]
     assert session.closed is True
 
 
@@ -95,6 +98,7 @@ def test_video_limits_fail_with_stable_codes(
     limit_changes: dict[str, object],
     source: bytes,
     expected_code: str,
+    tmp_path: Path,
 ) -> None:
     module = processing_module()
     probe_values = {
@@ -107,13 +111,15 @@ def test_video_limits_fail_with_stable_codes(
     }
     session = DeterministicSession(module.VideoProbe(**probe_values), [b"0", b"1"])
 
+    source_path = tmp_path / "video.mp4"
+    source_path.write_bytes(source)
     with pytest.raises(module.VideoProcessingError) as raised:
-        module.VideoProcessor(DeterministicBackend(session), limits(**limit_changes)).process(source)
+        module.VideoProcessor(DeterministicBackend(session), limits(**limit_changes)).process(source_path)
 
     assert raised.value.code == expected_code
 
 
-def test_extractor_session_closes_when_extraction_fails() -> None:
+def test_extractor_session_closes_when_extraction_fails(tmp_path: Path) -> None:
     module = processing_module()
     session = DeterministicSession(
         module.VideoProbe(2.0, "mp4", "h264", 640, 360),
@@ -121,7 +127,9 @@ def test_extractor_session_closes_when_extraction_fails() -> None:
         fail_extract=True,
     )
 
+    source = tmp_path / "video.mp4"
+    source.write_bytes(b"video")
     with pytest.raises(TimeoutError, match="extractor timeout"):
-        module.VideoProcessor(DeterministicBackend(session), limits()).process(b"video")
+        module.VideoProcessor(DeterministicBackend(session), limits()).process(source)
 
     assert session.closed is True

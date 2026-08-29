@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
+import json
 import os
 import re
 import secrets
@@ -237,6 +239,18 @@ def build_aws_worker_package(output: str | None = None) -> None:
     create_zip(stage, output_path(output, "aws-worker.zip"))
 
 
+def stage_azure_function(output: str | None = None) -> None:
+    """Create a minimal publish directory without traversing local artifacts."""
+
+    require_python_312()
+    stage = output_path(output, "azure-function-app")
+    clean_directory(stage)
+    copy_tree(PROJECT_ROOT / "backend", stage / "backend")
+    for name in ("host.json", "function_app.py", "requirements.txt"):
+        shutil.copy2(PROJECT_ROOT / name, stage / name)
+    print(f"Azure Function publish directory: {stage.resolve()}")
+
+
 def prepare_worker_context(model_directory: Path) -> Path:
     required = ("mdv5a.pt", "model.pt", "labels.txt")
     for name in required:
@@ -312,6 +326,87 @@ def build_push_worker_image(repository_uri: str, tag: str, model_directory: str 
     print(f"Worker image URI: {repository_uri}@{digest}")
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _model_release_manifest(bucket: str, version: str, model_directory: Path) -> dict[str, object]:
+    artifacts = {
+        "detector": model_directory / "mdv5a.pt",
+        "classifier": model_directory / "model.pt",
+        "labels": model_directory / "labels.txt",
+    }
+    for path in artifacts.values():
+        if not path.is_file():
+            fail(f"Missing model artifact: {path}")
+    prefix = f"models/releases/{version}"
+    return {
+        "schema_version": "1.0",
+        "model_version": version,
+        **{
+            name: {
+                "uri": f"s3://{bucket}/{prefix}/{path.name}",
+                "sha256": _sha256_file(path),
+            }
+            for name, path in artifacts.items()
+        },
+        "input": {"width": 480, "height": 480},
+        "thresholds": {"detection": 0.05, "classification": 0.5},
+    }
+
+
+def publish_model_release(bucket: str, version: str, model_directory: str | None) -> None:
+    require_python_312()
+    if re.fullmatch(r"(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)", version) is None:
+        fail("Model release version must be semantic versioning such as 1.0.0")
+    if re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", bucket) is None:
+        fail("Invalid S3 bucket name")
+    models = Path(model_directory).expanduser() if model_directory else PROJECT_ROOT / "models"
+    if not models.is_absolute():
+        models = PROJECT_ROOT / models
+    models = models.resolve()
+    manifest = _model_release_manifest(bucket, version, models)
+    release_dir = BUILD_DIR / "model-releases" / version
+    clean_directory(release_dir)
+    manifest_path = release_dir / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+    aws = command("aws")
+    prefix = f"models/releases/{version}"
+    for filename in ("mdv5a.pt", "model.pt", "labels.txt"):
+        run(
+            [
+                aws,
+                "s3",
+                "cp",
+                models / filename,
+                f"s3://{bucket}/{prefix}/{filename}",
+                "--only-show-errors",
+                "--cache-control",
+                "public,max-age=31536000,immutable",
+            ]
+        )
+    run(
+        [
+            aws,
+            "s3",
+            "cp",
+            manifest_path,
+            f"s3://{bucket}/{prefix}/manifest.json",
+            "--only-show-errors",
+            "--content-type",
+            "application/json",
+            "--cache-control",
+            "no-cache",
+        ]
+    )
+    print(f"Model manifest URI: s3://{bucket}/{prefix}/manifest.json")
+
+
 def report_terraform_state() -> None:
     for cloud in ("aws", "azure"):
         stack = PROJECT_ROOT / "infra" / cloud
@@ -357,7 +452,7 @@ def parser() -> argparse.ArgumentParser:
     commands = root.add_subparsers(dest="task", required=True)
     for name in ("bootstrap", "start-local", "test-backend", "test-contracts", "test-frontend", "lock-terraform-providers"):
         commands.add_parser(name)
-    for name in ("build-aws-api", "build-aws-worker"):
+    for name in ("build-aws-api", "build-aws-worker", "stage-azure-function"):
         build = commands.add_parser(name)
         build.add_argument("--output")
     validate = commands.add_parser("validate-infra")
@@ -366,6 +461,10 @@ def parser() -> argparse.ArgumentParser:
     image.add_argument("repository_uri")
     image.add_argument("--tag", default="ml-v1")
     image.add_argument("--model-directory")
+    model_release = commands.add_parser("publish-model-release")
+    model_release.add_argument("bucket")
+    model_release.add_argument("version")
+    model_release.add_argument("--model-directory")
     return root
 
 
@@ -385,10 +484,14 @@ def main() -> int:
             build_aws_api_package(args.output)
         elif args.task == "build-aws-worker":
             build_aws_worker_package(args.output)
+        elif args.task == "stage-azure-function":
+            stage_azure_function(args.output)
         elif args.task == "validate-infra":
             validate_infra(args.skip_build)
         elif args.task == "build-push-worker-image":
             build_push_worker_image(args.repository_uri, args.tag, args.model_directory)
+        elif args.task == "publish-model-release":
+            publish_model_release(args.bucket, args.version, args.model_directory)
         else:
             handlers[args.task]()
         return 0

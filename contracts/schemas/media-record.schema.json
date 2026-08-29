@@ -17,6 +17,9 @@
     "manual_tags": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 128}, "uniqueItems": true},
     "model_version": {"type": "string", "minLength": 1, "maxLength": 128},
     "status": {"type": "string", "enum": ["reserved", "uploaded", "processing", "prepared", "ready", "deleting", "failed"]},
+    "expires_at": {"type": ["string", "null"], "format": "date-time"},
+    "failure_code": {"type": ["string", "null"], "pattern": "^[A-Z][A-Z0-9_]{2,63}$"},
+    "failure_message": {"type": ["string", "null"], "minLength": 1, "maxLength": 500},
     "created_at": {"type": "string", "format": "date-time"},
     "updated_at": {"type": "string", "format": "date-time"}
   }

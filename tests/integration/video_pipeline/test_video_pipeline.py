@@ -47,8 +47,8 @@ class Backend:
     def __init__(self, session: Session) -> None:
         self.session = session
 
-    def open(self, source: bytes, *, timeout_seconds: int) -> Session:
-        assert source == b"tiny-deterministic-video"
+    def open(self, source, *, timeout_seconds: int) -> Session:
+        assert source.read_bytes() == b"tiny-deterministic-video"
         assert timeout_seconds == 10
         return self.session
 
@@ -57,8 +57,9 @@ class FailingProcessor:
     def __init__(self, error: BaseException) -> None:
         self.error = error
 
-    def process(self, source: bytes):
-        assert source == b"tiny-deterministic-video"
+    def process(self, source, *, size_bytes: int | None = None):
+        assert source.read_bytes() == b"tiny-deterministic-video"
+        assert size_bytes == len(b"tiny-deterministic-video")
         raise self.error
 
 
@@ -125,11 +126,11 @@ class FailOnceStorage(InMemoryObjectStorage):
         super().__init__()
         self._failed = False
 
-    def get_bytes(self, key: str) -> bytes:
+    def iter_bytes(self, key: str, *, chunk_size: int):
         if not self._failed:
             self._failed = True
             raise TimeoutError("temporary object-store timeout")
-        return super().get_bytes(key)
+        yield from super().iter_bytes(key, chunk_size=chunk_size)
 
 
 def event(key: str) -> dict[str, object]:

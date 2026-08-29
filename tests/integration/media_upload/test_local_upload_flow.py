@@ -74,8 +74,8 @@ class VideoSession:
 
 
 class VideoBackend:
-    def open(self, source: bytes, *, timeout_seconds: int) -> VideoSession:
-        assert source == b"deterministic-local-video"
+    def open(self, source, *, timeout_seconds: int) -> VideoSession:
+        assert source.read_bytes() == b"deterministic-local-video"
         assert timeout_seconds == 10
         return VideoSession()
 
@@ -117,6 +117,7 @@ def stack(media_id: UUID, *, inference: object | None = None):
     )
     reservations = UploadReservationService(
         repository=repository,
+        storage=storage,
         url_signer=signer,
         clock=clock,
         ids=SequenceIdGenerator([media_id]),

@@ -180,6 +180,30 @@ paths:
               schema: {$ref: "./schemas/delete-response.schema.json"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "422": {$ref: "#/components/responses/ValidationError"}
+  /uploads/reservations/{media_id}:
+    delete:
+      tags: [uploads]
+      operationId: cancelUploadReservation
+      security: [{CognitoBearer: []}]
+      parameters:
+        - name: media_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "./schemas/upload-reservation-cancel-request.schema.json"}
+      responses:
+        "200":
+          description: Idempotent cancellation outcome.
+          content:
+            application/json:
+              schema: {$ref: "./schemas/upload-reservation-cancel-response.schema.json"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "422": {$ref: "#/components/responses/ValidationError"}
   /media/{media_id}:
     delete:
       tags: [management]

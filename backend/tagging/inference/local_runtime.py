@@ -8,12 +8,15 @@ from collections import Counter
 from contextlib import contextmanager
 from pathlib import Path
 from threading import Lock
-from typing import Callable, Protocol
+from typing import TYPE_CHECKING, Callable, Protocol
 from urllib.parse import urlparse
 
 from PIL import Image
 
 from backend.common.providers.interfaces import InferenceResult, ObjectStorage
+
+if TYPE_CHECKING:
+    from backend.tagging.inference.manifest import LoadedModelBundle
 
 
 class WildlifeRuntime(Protocol):
@@ -40,6 +43,35 @@ class LocalWildlifeInferenceService:
         self._classification_threshold = classification_threshold
         self._runtime_factory = runtime_factory
         self._runtime: WildlifeRuntime | None = None
+
+    @classmethod
+    def from_manifest_bundle(
+        cls,
+        *,
+        storage: ObjectStorage,
+        bundle: "LoadedModelBundle",
+    ) -> "LocalWildlifeInferenceService":
+        """Build the production inference service from a validated manifest bundle."""
+
+        return cls(
+            storage=storage,
+            model_dir=bundle.detector_path.parent,
+            device=bundle.device,
+            detection_threshold=bundle.detection_threshold,
+            classification_threshold=bundle.classification_threshold,
+            runtime_factory=lambda: TorchWildlifeRuntime(
+                model_dir=bundle.detector_path.parent,
+                device=bundle.device,
+                detection_threshold=bundle.detection_threshold,
+                classification_threshold=bundle.classification_threshold,
+                detector_path=bundle.detector_path,
+                classifier_path=bundle.classifier_path,
+                labels_path=bundle.labels_path,
+                model_version=bundle.model_version,
+                input_width=bundle.input_width,
+                input_height=bundle.input_height,
+            ),
+        )
 
     def infer(self, storage_uris: list[str]) -> InferenceResult:
         if not storage_uris:
@@ -76,13 +108,21 @@ class TorchWildlifeRuntime:
         device: str,
         detection_threshold: float,
         classification_threshold: float,
+        detector_path: Path | None = None,
+        classifier_path: Path | None = None,
+        labels_path: Path | None = None,
+        model_version: str | None = None,
+        input_width: int = 480,
+        input_height: int = 480,
     ) -> None:
         self._model_dir = model_dir
         self._detection_threshold = detection_threshold
         self._classification_threshold = classification_threshold
-        self._detector_path = model_dir / "mdv5a.pt"
-        self._classifier_path = model_dir / "model.pt"
-        self._labels_path = model_dir / "labels.txt"
+        self._detector_path = detector_path or model_dir / "mdv5a.pt"
+        self._classifier_path = classifier_path or model_dir / "model.pt"
+        self._labels_path = labels_path or model_dir / "labels.txt"
+        self._input_width = input_width
+        self._input_height = input_height
         missing = [path.name for path in (self._detector_path, self._classifier_path, self._labels_path) if not path.is_file()]
         if missing:
             raise ValueError(f"local ML model directory is missing: {', '.join(missing)}")
@@ -121,8 +161,10 @@ class TorchWildlifeRuntime:
         self._classifier.to(self._device)
         self._labels = _load_labels(self._labels_path)
         self._inference_lock = Lock()
-        digest = hashlib.sha256(self._classifier_path.read_bytes()).hexdigest()[:12]
-        self._model_version = f"speciesnet-{digest}"
+        if model_version is None:
+            digest = hashlib.sha256(self._classifier_path.read_bytes()).hexdigest()[:12]
+            model_version = f"speciesnet-{digest}"
+        self._model_version = model_version
 
     def infer(self, inputs: list[tuple[str, bytes]]) -> InferenceResult:
         # The detector and the process-wide compatibility environment are not
@@ -174,7 +216,10 @@ class TorchWildlifeRuntime:
             return InferenceResult(tag_counts=dict(counts), model_version=self._model_version)
 
     def _classify(self, image: Image.Image) -> str | None:
-        resized = image.resize((480, 480), Image.Resampling.BILINEAR)
+        resized = image.resize(
+            (self._input_width, self._input_height),
+            Image.Resampling.BILINEAR,
+        )
         values = self._np.asarray(resized, dtype=self._np.float32) / 255.0
         tensor = self._torch.from_numpy(values).unsqueeze(0).to(self._device)
         with self._torch.no_grad():

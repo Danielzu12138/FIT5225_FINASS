@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import pytest
@@ -15,6 +15,7 @@ from backend.common.providers.fakes import (
     DeterministicObjectUrlSigner,
     FixedClock,
     InMemoryMediaRepository,
+    InMemoryObjectStorage,
     SequenceIdGenerator,
 )
 from backend.common.providers.interfaces import ReservationResult
@@ -22,6 +23,7 @@ from backend.common.providers.interfaces import ReservationResult
 
 MEDIA_ID = UUID("11111111-1111-4111-8111-111111111111")
 DISCARDED_DUPLICATE_ID = UUID("22222222-2222-4222-8222-222222222222")
+REPLACEMENT_ID = UUID("33333333-3333-4333-8333-333333333333")
 NOW = datetime(2026, 8, 22, 10, 0, tzinfo=UTC)
 
 
@@ -40,15 +42,23 @@ def request(**changes: object) -> UploadReservationRequest:
     return UploadReservationRequest.model_validate(values)
 
 
-def service(repository: InMemoryMediaRepository | None = None):
+def service(
+    repository: InMemoryMediaRepository | None = None,
+    storage: InMemoryObjectStorage | None = None,
+    *,
+    now: datetime = NOW,
+    ids: list[UUID] | None = None,
+    signer: object | None = None,
+):
     return uploads_module().UploadReservationService(
         repository=repository or InMemoryMediaRepository(),
-        url_signer=DeterministicObjectUrlSigner(
+        storage=storage or InMemoryObjectStorage(),
+        url_signer=signer or DeterministicObjectUrlSigner(
             upload_base_url="https://uploads.example.test",
             download_base_url="https://downloads.example.test",
         ),
-        clock=FixedClock(NOW),
-        ids=SequenceIdGenerator([MEDIA_ID, DISCARDED_DUPLICATE_ID]),
+        clock=FixedClock(now),
+        ids=SequenceIdGenerator(ids or [MEDIA_ID, DISCARDED_DUPLICATE_ID]),
         bucket_name="pba-media",
         max_size_bytes=1024,
     )
@@ -88,6 +98,7 @@ def test_new_reservation_uses_safe_deterministic_key_and_duplicate_has_no_url() 
     assert record is not None
     assert str(record.original_storage_uri) == f"s3://pba-media/{expected_key}"
     assert record.file_name == "camera-trap.jpg"
+    assert record.expires_at == NOW + timedelta(seconds=900)
 
 
 def test_same_content_for_different_owners_uses_opaque_distinct_object_partitions() -> None:
@@ -131,7 +142,14 @@ def test_contract_rejects_paths_and_non_lowercase_sha256() -> None:
 class SlowAtomicBoundaryRepository(InMemoryMediaRepository):
     """Exposes a deterministic race when orchestration does not serialize the fake."""
 
-    def reserve_upload(self, owner_sub: str, sha256: str, media_id: UUID) -> ReservationResult:
+    def reserve_upload(
+        self,
+        owner_sub: str,
+        sha256: str,
+        media_id: UUID,
+        expires_at: datetime | None = None,
+    ) -> ReservationResult:
+        del expires_at
         key = (owner_sub, sha256)
         existing = self._reservations.get(key)
         time.sleep(0.05)
@@ -156,3 +174,116 @@ def test_concurrent_reservations_create_one_media_record() -> None:
     assert sorted(response.duplicate for response in responses) == [False, True]
     assert len({response.media_id for response in responses}) == 1
     assert len(repository._records) == 1
+
+
+def test_expired_unuploaded_reservation_is_lazily_reclaimed_for_reupload() -> None:
+    repository = InMemoryMediaRepository()
+    storage = InMemoryObjectStorage()
+    first = service(repository, storage, ids=[MEDIA_ID]).reserve("owner-123", request())
+
+    replacement = service(
+        repository,
+        storage,
+        now=NOW + timedelta(seconds=901),
+        ids=[DISCARDED_DUPLICATE_ID, REPLACEMENT_ID],
+    ).reserve("owner-123", request())
+
+    assert first.media_id == MEDIA_ID
+    assert replacement.duplicate is False
+    assert replacement.media_id == REPLACEMENT_ID
+    assert repository.get("owner-123", MEDIA_ID) is None
+    assert repository.get("owner-123", REPLACEMENT_ID) is not None
+
+
+def test_expired_reservation_with_uploaded_object_is_preserved() -> None:
+    repository = InMemoryMediaRepository()
+    storage = InMemoryObjectStorage()
+    reservations = service(repository, storage, ids=[MEDIA_ID])
+    first = reservations.reserve("owner-123", request())
+    assert first.object_key is not None
+    storage.put_bytes(first.object_key, b"received", content_type="image/jpeg")
+
+    duplicate = service(
+        repository,
+        storage,
+        now=NOW + timedelta(seconds=901),
+        ids=[DISCARDED_DUPLICATE_ID],
+    ).reserve("owner-123", request())
+
+    assert duplicate.duplicate is True
+    assert duplicate.status == "uploaded"
+    recovered = repository.get("owner-123", MEDIA_ID)
+    assert recovered is not None
+    assert recovered.expires_at is None
+
+
+class FailingSigner:
+    def create_upload_url(self, *args, **kwargs):
+        del args, kwargs
+        raise RuntimeError("presign unavailable")
+
+    def create_download_url(self, *args, **kwargs):
+        del args, kwargs
+        raise AssertionError("not used")
+
+
+def test_presign_failure_compensates_media_and_checksum_reservation() -> None:
+    repository = InMemoryMediaRepository()
+    with pytest.raises(RuntimeError, match="presign unavailable"):
+        service(repository, signer=FailingSigner(), ids=[MEDIA_ID]).reserve("owner-123", request())
+
+    assert repository.get("owner-123", MEDIA_ID) is None
+    replacement = repository.reserve_upload("owner-123", "a" * 64, REPLACEMENT_ID)
+    assert replacement.created is True
+
+
+class FailingUpsertRepository(InMemoryMediaRepository):
+    def upsert(self, record) -> None:
+        del record
+        raise RuntimeError("database unavailable")
+
+
+def test_media_write_failure_releases_checksum_reservation() -> None:
+    repository = FailingUpsertRepository()
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        service(repository, ids=[MEDIA_ID]).reserve("owner-123", request())
+
+    replacement = repository.reserve_upload("owner-123", "a" * 64, REPLACEMENT_ID)
+    assert replacement.created is True
+
+
+def test_cancel_is_owner_checksum_scoped_and_idempotent() -> None:
+    repository = InMemoryMediaRepository()
+    reservations = service(repository, ids=[MEDIA_ID])
+    created = reservations.reserve("owner-123", request())
+
+    with pytest.raises(ApiError) as wrong_checksum:
+        reservations.cancel("owner-123", created.media_id, "b" * 64)
+    assert wrong_checksum.value.code == "UPLOAD_RESERVATION_CONFLICT"
+
+    cancelled = reservations.cancel("owner-123", created.media_id, "a" * 64)
+    repeated = reservations.cancel("owner-123", created.media_id, "a" * 64)
+    foreign = reservations.cancel("other-owner", created.media_id, "a" * 64)
+
+    assert cancelled.status == "cancelled"
+    assert repeated.status == "already_cancelled"
+    assert foreign.status == "already_cancelled"
+    assert repository.get("owner-123", created.media_id) is None
+    assert repository.reserve_upload("owner-123", "a" * 64, REPLACEMENT_ID).created is True
+
+
+def test_cancel_does_not_delete_a_completed_put() -> None:
+    repository = InMemoryMediaRepository()
+    storage = InMemoryObjectStorage()
+    reservations = service(repository, storage, ids=[MEDIA_ID])
+    created = reservations.reserve("owner-123", request())
+    assert created.object_key is not None
+    storage.put_bytes(created.object_key, b"received", content_type="image/jpeg")
+
+    with pytest.raises(ApiError) as committed:
+        reservations.cancel("owner-123", created.media_id, "a" * 64)
+
+    assert committed.value.code == "UPLOAD_RESERVATION_COMMITTED"
+    record = repository.get("owner-123", MEDIA_ID)
+    assert record is not None and record.status == "uploaded"
+    assert record.expires_at is None

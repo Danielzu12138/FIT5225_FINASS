@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from uuid import UUID
 
 from backend.common.contracts.models import MediaRecord
@@ -24,7 +25,14 @@ class InMemoryPagedMediaRepository:
         self._records: dict[tuple[str, UUID], MediaRecord] = {}
         self._materialized_reservations: dict[tuple[str, str], UUID] = {}
 
-    def reserve_upload(self, owner_sub: str, sha256: str, media_id: UUID) -> ReservationResult:
+    def reserve_upload(
+        self,
+        owner_sub: str,
+        sha256: str,
+        media_id: UUID,
+        expires_at: datetime | None = None,
+    ) -> ReservationResult:
+        del expires_at
         key = (owner_sub, sha256)
         existing = self._reservations.get(key)
         if (

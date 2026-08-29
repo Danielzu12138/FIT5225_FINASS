@@ -28,6 +28,8 @@ function authValue(): AuthContextValue {
     accessToken: "access-token",
     login: vi.fn(),
     signup: vi.fn(),
+    confirmRegistration: vi.fn(),
+    resendRegistration: vi.fn(),
     localLogin: vi.fn(),
     completeCallback: vi.fn(),
     logout: vi.fn(),

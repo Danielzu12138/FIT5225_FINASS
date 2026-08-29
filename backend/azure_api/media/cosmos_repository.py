@@ -30,7 +30,13 @@ class CosmosPagedMediaRepository:
         self._container = container
         self._page_size = page_size
 
-    def reserve_upload(self, owner_sub: str, sha256: str, media_id: UUID) -> ReservationResult:
+    def reserve_upload(
+        self,
+        owner_sub: str,
+        sha256: str,
+        media_id: UUID,
+        expires_at: datetime | None = None,
+    ) -> ReservationResult:
         reservation_id = f"reservation:{sha256}"
         # A reservation and its media item are separate Cosmos documents.  If
         # the latter was deleted first, reclaim the orphan and retry the
@@ -50,6 +56,7 @@ class CosmosPagedMediaRepository:
                             "sha256": sha256,
                             "media_id": str(media_id),
                             "created_at": datetime.now(UTC).isoformat(),
+                            "expires_at": expires_at.isoformat() if expires_at is not None else None,
                         }
                     )
                 except Exception as create_error:
@@ -286,6 +293,16 @@ def _is_not_found(error: Exception) -> bool:
 
 
 def _reservation_is_stale(item: dict[str, Any]) -> bool:
+    raw_expiry = item.get("expires_at")
+    if raw_expiry:
+        try:
+            expiry = datetime.fromisoformat(str(raw_expiry).replace("Z", "+00:00"))
+        except ValueError:
+            return True
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=UTC)
+        return datetime.now(UTC) >= expiry
+
     raw_created = item.get("created_at")
     if not raw_created:
         # Legacy reservation documents predate the grace-period marker.

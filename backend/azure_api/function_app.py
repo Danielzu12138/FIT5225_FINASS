@@ -54,7 +54,16 @@ def _build_runtime():
 
 
 def create_data_api() -> FastAPI:
-    app = FastAPI(title="Pacific BioArchive Azure Data API", version="0.1.0")
+    # The Function catch-all is intentionally anonymous at the host layer so
+    # Cognito bearer tokens can be used. Do not expose discovery endpoints from
+    # that catch-all; every business route below applies require_auth itself.
+    app = FastAPI(
+        title="Pacific BioArchive Azure Data API",
+        version="0.1.0",
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+    )
     app.add_middleware(CORSMiddleware, allow_origins=[], allow_methods=["GET", "POST"], allow_headers=["Authorization", "Content-Type"])
 
     @app.exception_handler(ApiError)
@@ -68,10 +77,15 @@ def create_data_api() -> FastAPI:
     @app.get("/health")
     def health() -> dict[str, str]:
         try:
-            _build_runtime()
-        except Exception as error:
-            return {"status": "degraded", "database": "cosmos", "error": type(error).__name__}
-        return {"status": "ok", "database": "cosmos"}
+            repository, _ = _build_runtime()
+            # Exercise the data-plane query permission without reading a real
+            # owner's partition. This makes the health endpoint useful during
+            # managed-identity/RBAC cutovers instead of merely constructing an
+            # SDK client.
+            repository.list_for_owner("__azure_healthcheck__")
+        except Exception:
+            return {"status": "degraded"}
+        return {"status": "ok"}
 
     def repository_and_auth():
         repository, verifier = _build_runtime()

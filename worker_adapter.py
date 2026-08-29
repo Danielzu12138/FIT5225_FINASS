@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from datetime import UTC, datetime
 from functools import lru_cache
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import boto3
@@ -19,14 +21,28 @@ from dataclasses import dataclass
 from urllib.parse import unquote_plus
 
 from backend.azure_api.media.cosmos_repository import CosmosPagedMediaRepository
+from backend.common.azure_cosmos_credential import load_cosmos_credential
 from backend.common.contracts.models import MediaPreparedEvent, TaggingCompletedEvent
+from backend.common.media_limits import (
+    MAX_VIDEO_BYTES,
+    MAX_VIDEO_DURATION_SECONDS,
+    MAX_VIDEO_FRAMES,
+    VIDEO_PROCESSING_TIMEOUT_SECONDS,
+)
 from backend.common.providers.fakes import FixedClock
 from backend.common.providers.interfaces import EventPublisher, IdGenerator, ObjectStorage
 from backend.media_processor.images.handler import ImageEventHandler, ObjectHead as ImageHead
 from backend.media_processor.images.thumbnail import PillowThumbnailer, ThumbnailConfig
 from backend.media_processor.videos.handler import ObjectHead as VideoHead, VideoEventHandler
 from backend.media_processor.videos.processing import VideoLimits, VideoProcessor
+from backend.media_processor.videos.streaming import stream_object_to_path
 from backend.media_processor.videos import FfmpegVideoBackend
+from backend.tagging.inference.manifest import (
+    LocalArtifactReader,
+    ManifestBundleLoader,
+    S3ArtifactReader,
+    load_configured_bundle,
+)
 from backend.tagging.inference.local_runtime import LocalWildlifeInferenceService
 from backend.tagging.worker.service import TaggingWorker
 
@@ -40,6 +56,17 @@ class S3Storage(ObjectStorage):
 
     def get_bytes(self, key: str) -> bytes:
         return self._client.get_object(Bucket=self._bucket, Key=key)["Body"].read()
+
+    def iter_bytes(self, key: str, *, chunk_size: int):
+        body = self._client.get_object(Bucket=self._bucket, Key=key)["Body"]
+        try:
+            for chunk in body.iter_chunks(chunk_size=chunk_size):
+                if chunk:
+                    yield chunk
+        finally:
+            close = getattr(body, "close", None)
+            if close is not None:
+                close()
 
     def list_keys(self, prefix: str) -> list[str]:
         paginator = self._client.get_paginator("list_objects_v2")
@@ -69,6 +96,7 @@ class S3Inspector:
             content_type=str(head.get("ContentType", "application/octet-stream")),
             metadata={str(key).lower(): str(value) for key, value in head.get("Metadata", {}).items()},
             version_id=head.get("VersionId"),
+            content_length=int(head["ContentLength"]) if head.get("ContentLength") is not None else None,
         )
 
 
@@ -77,6 +105,7 @@ class ObjectHead:
     content_type: str
     metadata: dict[str, str]
     version_id: str | None = None
+    content_length: int | None = None
 
 
 class WorkerEventPublisher(EventPublisher):
@@ -115,30 +144,9 @@ class UuidIds(IdGenerator):
 @lru_cache(maxsize=1)
 def _cosmos_credential():
     secret_arn = os.environ["AZURE_WORKER_SECRET_ARN"]
-    response = boto3.client("secretsmanager", region_name=os.environ.get("AWS_REGION")).get_secret_value(
-        SecretId=secret_arn
-    )
-    try:
-        payload = json.loads(response["SecretString"])
-    except (KeyError, TypeError, json.JSONDecodeError) as error:
-        raise RuntimeError("Azure worker credential secret is invalid") from error
-    if not isinstance(payload, dict):
-        raise RuntimeError("Azure worker credential secret is invalid")
-    cosmos_key = payload.get("cosmos_key")
-    if isinstance(cosmos_key, str) and cosmos_key:
-        return cosmos_key
-    try:
-        tenant_id = payload["tenant_id"]
-        client_id = payload["client_id"]
-        client_secret = payload["client_secret"]
-    except (KeyError, TypeError) as error:
-        raise RuntimeError("Azure worker credential secret is invalid") from error
-    from azure.identity import ClientSecretCredential
-
-    return ClientSecretCredential(
-        tenant_id=tenant_id,
-        client_id=client_id,
-        client_secret=client_secret,
+    return load_cosmos_credential(
+        boto3.client("secretsmanager", region_name=os.environ.get("AWS_REGION")),
+        secret_arn,
     )
 
 
@@ -163,13 +171,60 @@ class ReservationAdapter:
     def mark_prepared(self, media_id: UUID, thumbnail_uri: str, frame_uris: list[str] | None = None) -> None:
         record = self._repository.get_by_id_any_owner(media_id)
         if record is not None:
-            self._repository.upsert(record.model_copy(update={"thumbnail_storage_uri": thumbnail_uri, "status": "prepared"}))
+            self._repository.upsert(
+                record.model_copy(
+                    update={
+                        "thumbnail_storage_uri": thumbnail_uri,
+                        "status": "prepared",
+                        "expires_at": None,
+                    }
+                )
+            )
 
     def mark_failed(self, media_id: UUID, code: str, message: str) -> None:
-        del code, message
         record = self._repository.get_by_id_any_owner(media_id)
         if record is not None:
-            self._repository.upsert(record.model_copy(update={"status": "failed"}))
+            self._repository.upsert(
+                record.model_copy(
+                    update={
+                        "status": "failed",
+                        "expires_at": None,
+                        "failure_code": code,
+                        "failure_message": message[:500],
+                        "updated_at": datetime.now(UTC),
+                    }
+                )
+            )
+
+
+def _build_inference(storage: S3Storage, s3_client: object) -> LocalWildlifeInferenceService:
+    manifest_uri = os.environ.get("MODEL_MANIFEST_URI", "").strip()
+    if manifest_uri:
+        loader = ManifestBundleLoader(
+            readers={
+                "file": LocalArtifactReader(),
+                "s3": S3ArtifactReader(s3_client),
+            },
+            cache_dir=Path(os.environ.get("MODEL_CACHE_DIR", "/tmp/pba-model-cache")),
+        )
+        bundle = load_configured_bundle(
+            loader,
+            {
+                "MODEL_MANIFEST_URI": manifest_uri,
+                "MODEL_DEVICE": os.environ.get("MODEL_DEVICE", "cpu"),
+            },
+        )
+        return LocalWildlifeInferenceService.from_manifest_bundle(
+            storage=storage,
+            bundle=bundle,
+        )
+    return LocalWildlifeInferenceService(
+        storage=storage,
+        model_dir=Path(os.environ["ML_MODEL_DIR"]),
+        device=os.environ.get("ML_DEVICE", "cpu"),
+        detection_threshold=float(os.environ.get("ML_DETECTION_THRESHOLD", "0.05")),
+        classification_threshold=float(os.environ.get("ML_CLASSIFICATION_THRESHOLD", "0.5")),
+    )
 
 
 def _build():
@@ -190,8 +245,8 @@ def _build():
     clock = FixedClock(datetime.now(UTC))
     ids = UuidIds()
     image = ImageEventHandler(bucket_name=bucket, storage=storage, inspector=inspector, reservations=reservations, publisher=publisher, thumbnailer=PillowThumbnailer(ThumbnailConfig()), clock=clock, ids=ids, recompute_checksum=True)
-    video = VideoEventHandler(bucket_name=bucket, storage=storage, inspector=inspector, reservations=reservations, publisher=publisher, processor=VideoProcessor(FfmpegVideoBackend(), VideoLimits(max_input_bytes=5_368_709_120, max_duration_seconds=3600, max_frames=3600, timeout_seconds=30, supported_containers=("mp4", "mov"), supported_codecs=("h264", "hevc"))), clock=clock, ids=ids, recompute_checksum=True)
-    inference = LocalWildlifeInferenceService(storage=storage, model_dir=os.environ["ML_MODEL_DIR"], device=os.environ.get("ML_DEVICE", "cpu"), detection_threshold=float(os.environ.get("ML_DETECTION_THRESHOLD", "0.05")), classification_threshold=float(os.environ.get("ML_CLASSIFICATION_THRESHOLD", "0.5")))
+    video = VideoEventHandler(bucket_name=bucket, storage=storage, inspector=inspector, reservations=reservations, publisher=publisher, processor=VideoProcessor(FfmpegVideoBackend(), VideoLimits(max_input_bytes=MAX_VIDEO_BYTES, max_duration_seconds=MAX_VIDEO_DURATION_SECONDS, max_frames=MAX_VIDEO_FRAMES, timeout_seconds=VIDEO_PROCESSING_TIMEOUT_SECONDS, supported_containers=("mp4", "mov"), supported_codecs=("h264", "hevc"))), clock=clock, ids=ids, recompute_checksum=True)
+    inference = _build_inference(storage, s3)
     tagging = TaggingWorker(storage=storage, inference=inference, repository=repository, publisher=publisher, clock=clock, ids=ids)
     return s3, image, video, tagging, repository, inference
 
@@ -213,7 +268,17 @@ def handler(event, context):
             raise ValueError("temporary object is outside the configured bucket")
         content_type = s3.head_object(Bucket=bucket, Key=key).get("ContentType", "")
         if content_type.startswith("video/"):
-            result = video._processor.process(storage.get_bytes(key))  # type: ignore[attr-defined]
+            head = s3.head_object(Bucket=bucket, Key=key)
+            with tempfile.TemporaryDirectory(prefix="pba-query-video-") as temporary:
+                source_path = Path(temporary) / "source.video"
+                size_bytes, _ = stream_object_to_path(
+                    storage,
+                    key,
+                    source_path,
+                    max_bytes=video._processor.max_input_bytes,  # type: ignore[attr-defined]
+                    expected_size=int(head["ContentLength"]),
+                )
+                result = video._processor.process(source_path, size_bytes=size_bytes)  # type: ignore[attr-defined]
             request_prefix = key.rsplit("/", 1)[0]
             inference_uris = []
             for timestamp, frame in zip(result.timestamps, result.frames, strict=True):

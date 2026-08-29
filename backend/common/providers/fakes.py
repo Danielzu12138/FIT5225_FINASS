@@ -27,6 +27,13 @@ class InMemoryObjectStorage:
     def get_bytes(self, key: str) -> bytes:
         return self._objects[key][0]
 
+    def iter_bytes(self, key: str, *, chunk_size: int):
+        if chunk_size < 1:
+            raise ValueError("chunk_size must be positive")
+        data = self._objects[key][0]
+        for start in range(0, len(data), chunk_size):
+            yield data[start : start + chunk_size]
+
     def get_content_type(self, key: str) -> str:
         return self._objects[key][1]
 
@@ -47,7 +54,14 @@ class InMemoryMediaRepository:
         self._records: dict[tuple[str, UUID], MediaRecord] = {}
         self._materialized_reservations: dict[tuple[str, str], UUID] = {}
 
-    def reserve_upload(self, owner_sub: str, sha256: str, media_id: UUID) -> ReservationResult:
+    def reserve_upload(
+        self,
+        owner_sub: str,
+        sha256: str,
+        media_id: UUID,
+        expires_at: datetime | None = None,
+    ) -> ReservationResult:
+        del expires_at
         key = (owner_sub, sha256)
         existing = self._reservations.get(key)
         # A media document can be lost independently of its reservation (for

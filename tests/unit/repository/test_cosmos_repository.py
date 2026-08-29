@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from backend.azure_api.media.cosmos_repository import CosmosPagedMediaRepository
@@ -93,6 +93,32 @@ def test_fresh_orphan_reservation_is_not_reclaimed_by_second_request() -> None:
     assert second.media_id == first_id
     assert ("owner", f"reservation:{checksum}") not in container.deleted
     assert container.documents[("owner", f"reservation:{checksum}")]["media_id"] == str(first_id)
+
+
+def test_expired_orphan_reservation_uses_explicit_server_expiry() -> None:
+    container = FakeCosmosContainer()
+    repository = CosmosPagedMediaRepository(container)
+    checksum = "e" * 64
+    old_id = UUID("11111111-1111-4111-8111-111111111111")
+    replacement_id = UUID("22222222-2222-4222-8222-222222222222")
+    repository.reserve_upload(
+        "owner",
+        checksum,
+        old_id,
+        datetime.now(UTC) - timedelta(seconds=1),
+    )
+
+    result = repository.reserve_upload(
+        "owner",
+        checksum,
+        replacement_id,
+        datetime.now(UTC) + timedelta(minutes=15),
+    )
+
+    assert result.created is True
+    assert result.media_id == replacement_id
+    assert ("owner", f"reservation:{checksum}") in container.deleted
+    assert container.documents[("owner", f"reservation:{checksum}")]["expires_at"] is not None
 
 
 def test_legacy_orphan_reservation_without_created_at_is_reclaimed() -> None:

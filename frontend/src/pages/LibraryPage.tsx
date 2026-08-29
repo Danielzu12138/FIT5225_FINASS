@@ -9,7 +9,10 @@ import { SubscriptionPanel } from "../subscriptions/SubscriptionPanel";
 import { UploadPanel } from "../upload/UploadPanel";
 
 const platformClient = new PlatformClient();
-const uploadClient = { reserve: platformClient.reserve.bind(platformClient) };
+const uploadClient = {
+  reserve: platformClient.reserve.bind(platformClient),
+  cancelReservation: platformClient.cancelReservation.bind(platformClient),
+};
 const mediaClient = {
   list: platformClient.listMedia.bind(platformClient),
   deleteMediaById: platformClient.deleteMediaById.bind(platformClient),

@@ -8,3 +8,5 @@ cognito_issuer         = "https://cognito-idp.ap-southeast-2.amazonaws.com/repla
 cognito_app_client_id  = "replace-client-id"
 aws_media_bucket       = "replace-media-bucket"
 # worker_principal_id  = "replace-service-principal-object-id"
+# api_principal_id          = "replace-api-service-principal-object-id"
+# notification_principal_id = "replace-notification-service-principal-object-id"

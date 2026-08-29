@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { PlatformClient } from "../src/api/platformClient";
+import { AUTHENTICATION_REQUIRED_EVENT } from "../src/auth/authClient";
 
 const result = {
   media_id: "11111111-1111-4111-8111-111111111111",
@@ -134,7 +135,8 @@ describe("PlatformClient", () => {
     const mediaResponse = { results: [{ ...result, status: "ready" }] };
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse(reservation))
-      .mockResolvedValueOnce(jsonResponse(mediaResponse));
+      .mockResolvedValueOnce(jsonResponse(mediaResponse))
+      .mockResolvedValueOnce(jsonResponse({ media_id: reservation.media_id, status: "cancelled" }));
     vi.stubGlobal("fetch", fetchMock);
     const client = new PlatformClient("https://api.example.test");
 
@@ -145,11 +147,18 @@ describe("PlatformClient", () => {
       sha256: "a".repeat(64),
     }, "access-token")).resolves.toEqual(reservation);
     await expect(client.listMedia("access-token")).resolves.toEqual(mediaResponse);
+    await expect(client.cancelReservation(reservation.media_id, "a".repeat(64), "access-token"))
+      .resolves.toMatchObject({ status: "cancelled" });
 
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       "https://api.example.test/uploads/reservations",
       "https://api.example.test/media",
+      `https://api.example.test/uploads/reservations/${reservation.media_id}`,
     ]);
+    expect(fetchMock.mock.calls[2][1]).toMatchObject({
+      method: "DELETE",
+      body: JSON.stringify({ sha256: "a".repeat(64) }),
+    });
   });
 
   it("surfaces JSON API error messages", async () => {
@@ -157,5 +166,15 @@ describe("PlatformClient", () => {
 
     await expect(new PlatformClient("https://api.example.test").list("access-token"))
       .rejects.toThrow("Access denied");
+  });
+
+  it("signals the auth provider to clear an expired session after a 401", async () => {
+    const authenticationRequired = vi.fn();
+    window.addEventListener(AUTHENTICATION_REQUIRED_EVENT, authenticationRequired, { once: true });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ error: { message: "Token expired" } }, 401)));
+
+    await expect(new PlatformClient("https://api.example.test").list("expired-token"))
+      .rejects.toThrow("Token expired");
+    expect(authenticationRequired).toHaveBeenCalledOnce();
   });
 });

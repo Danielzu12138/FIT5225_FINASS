@@ -8,7 +8,13 @@
   "properties": {
     "file_name": {"type": "string", "minLength": 1, "maxLength": 255, "pattern": "^[^/\\\\]+$"},
     "media_type": {"type": "string", "enum": ["image", "video"]},
-    "size_bytes": {"type": "integer", "minimum": 1, "maximum": 5368709120},
+    "size_bytes": {"type": "integer", "minimum": 1, "maximum": 536870912},
     "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
-  }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"media_type": {"const": "image"}}},
+      "then": {"properties": {"size_bytes": {"maximum": 26214400}}}
+    }
+  ]
 }

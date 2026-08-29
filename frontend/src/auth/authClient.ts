@@ -16,10 +16,60 @@ interface TokenResponse {
   token_type: string;
 }
 
+export interface SignupDetails {
+  email: string;
+  password: string;
+  givenName: string;
+  familyName: string;
+}
+
+export interface CognitoSignupResult {
+  userConfirmed: boolean;
+  destination?: string;
+}
+
+interface CognitoDeliveryDetails {
+  Destination?: string;
+}
+
+interface CognitoSignupResponse {
+  UserConfirmed?: boolean;
+  CodeDeliveryDetails?: CognitoDeliveryDetails;
+}
+
+interface CognitoErrorPayload {
+  __type?: string;
+  message?: string;
+}
+
+const COGNITO_ERROR_MESSAGES: Record<string, string> = {
+  CodeMismatchException: "The verification code is incorrect",
+  ExpiredCodeException: "The verification code has expired. Request a new code and try again",
+  InvalidParameterException: "The registration details are invalid",
+  InvalidPasswordException: "The password does not meet the security requirements",
+  LimitExceededException: "Too many attempts. Wait a moment before trying again",
+  NotAuthorizedException: "This account cannot be confirmed with that code",
+  TooManyFailedAttemptsException: "Too many incorrect attempts. Request a new code later",
+  TooManyRequestsException: "Too many requests. Wait a moment before trying again",
+  UserNotFoundException: "No registration was found for this email address",
+  UsernameExistsException: "An account with this email already exists. Confirm it or return to sign in",
+};
+
+export class CognitoAuthError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "CognitoAuthError";
+  }
+}
+
 const STATE_KEY = "pba.oauth.state";
 const VERIFIER_KEY = "pba.oauth.verifier";
 const NONCE_KEY = "pba.oauth.nonce";
 const TOKEN_KEY = "pba.auth.tokens";
+export const AUTHENTICATION_REQUIRED_EVENT = "pba:authentication-required";
 
 function base64Url(bytes: Uint8Array): string {
   let raw = "";
@@ -108,6 +158,68 @@ export class BrowserAuthClient {
   getAccessToken(): string | null {
     const parsed = this.readTokens();
     return parsed?.access_token && parsed.expires_at > Date.now() ? parsed.access_token : null;
+  }
+
+  private async cognitoRequest<T>(operation: string, body: Record<string, unknown>): Promise<T> {
+    const response = await fetch(`https://cognito-idp.${this.config.region}.amazonaws.com/`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-amz-json-1.1",
+        "X-Amz-Target": `AWSCognitoIdentityProviderService.${operation}`,
+      },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      let payload: CognitoErrorPayload = {};
+      try {
+        payload = (await response.json()) as CognitoErrorPayload;
+      } catch {
+        // Cognito normally returns JSON errors, but callers still receive a stable message if it does not.
+      }
+      const code = payload.__type?.split("#").at(-1) ?? "CognitoRequestFailed";
+      throw new CognitoAuthError(
+        code,
+        COGNITO_ERROR_MESSAGES[code] ?? payload.message ?? "The authentication request failed",
+      );
+    }
+    return (await response.json()) as T;
+  }
+
+  async signUp(details: SignupDetails): Promise<CognitoSignupResult> {
+    const email = details.email.trim().toLowerCase();
+    const response = await this.cognitoRequest<CognitoSignupResponse>("SignUp", {
+      ClientId: this.config.app_client_id,
+      Username: email,
+      Password: details.password,
+      UserAttributes: [
+        { Name: "email", Value: email },
+        { Name: "given_name", Value: details.givenName.trim() },
+        { Name: "family_name", Value: details.familyName.trim() },
+      ],
+    });
+    return {
+      userConfirmed: response.UserConfirmed === true,
+      destination: response.CodeDeliveryDetails?.Destination,
+    };
+  }
+
+  async confirmSignUp(email: string, code: string): Promise<void> {
+    await this.cognitoRequest<Record<string, never>>("ConfirmSignUp", {
+      ClientId: this.config.app_client_id,
+      Username: email.trim().toLowerCase(),
+      ConfirmationCode: code.trim(),
+    });
+  }
+
+  async resendConfirmationCode(email: string): Promise<string | undefined> {
+    const response = await this.cognitoRequest<{ CodeDeliveryDetails?: CognitoDeliveryDetails }>(
+      "ResendConfirmationCode",
+      {
+        ClientId: this.config.app_client_id,
+        Username: email.trim().toLowerCase(),
+      },
+    );
+    return response.CodeDeliveryDetails?.Destination;
   }
 
   storeLocalAccessToken(accessToken: string, expiresIn: number): void {

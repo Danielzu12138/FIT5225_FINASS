@@ -94,6 +94,8 @@ def test_media_route_requires_auth_and_returns_only_signed_owner_media() -> None
                 "thumbnail_url": f"https://downloads.example.test/derived/{owned_image.media_id}/{'a' * 64}/thumbnail.jpg",
                 "tag_counts": {"dingo": 2},
                 "manual_tags": [],
+                "failure_code": None,
+                "failure_message": None,
             },
             {
                 "media_id": str(owned_video.media_id),
@@ -103,6 +105,8 @@ def test_media_route_requires_auth_and_returns_only_signed_owner_media() -> None
                 "thumbnail_url": f"https://downloads.example.test/derived/{owned_video.media_id}/{'a' * 64}/thumbnail.jpg",
                 "tag_counts": {"dingo": 2},
                 "manual_tags": [],
+                "failure_code": None,
+                "failure_message": None,
             },
             {
                 "media_id": str(processing.media_id),
@@ -112,6 +116,8 @@ def test_media_route_requires_auth_and_returns_only_signed_owner_media() -> None
                 "thumbnail_url": None,
                 "tag_counts": {"dingo": 2},
                 "manual_tags": [],
+                "failure_code": None,
+                "failure_message": None,
             },
         ]
     }

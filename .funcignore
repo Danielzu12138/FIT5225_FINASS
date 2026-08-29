@@ -11,8 +11,10 @@ local.settings.json
 build/
 frontend/
 infra/
+models/
 scripts/
 tests/
+tmp/
 *.pdf
 *.pptx
 *.zip

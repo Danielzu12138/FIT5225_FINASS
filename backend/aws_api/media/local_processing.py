@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 from backend.common.providers.interfaces import Clock, InferenceService, MediaRepository, ObjectStorage
 from backend.media_processor.images.thumbnail import PillowThumbnailer
 from backend.media_processor.videos.processing import VideoProcessor
@@ -43,8 +46,12 @@ class LocalMediaProcessingService:
             raise ValueError("uploaded object key does not match its reservation")
 
         now = self._clock.now_utc()
-        self._repository.upsert(record.model_copy(update={"status": "uploaded", "updated_at": now}))
-        processing = record.model_copy(update={"status": "processing", "updated_at": now})
+        self._repository.upsert(
+            record.model_copy(update={"status": "uploaded", "expires_at": None, "updated_at": now})
+        )
+        processing = record.model_copy(
+            update={"status": "processing", "expires_at": None, "updated_at": now}
+        )
         self._repository.upsert(processing)
         derived_prefix = f"derived/{record.media_id}/{record.sha256}"
 
@@ -58,7 +65,10 @@ class LocalMediaProcessingService:
             else:
                 if content_type not in {"video/mp4", "video/quicktime"}:
                     raise ValueError("uploaded video content type is invalid")
-                video = self._video_processor.process(source)
+                with tempfile.TemporaryDirectory(prefix="pba-local-video-") as temporary:
+                    source_path = Path(temporary) / "source.video"
+                    source_path.write_bytes(source)
+                    video = self._video_processor.process(source_path, size_bytes=len(source))
                 frame_uris: list[str] = []
                 for timestamp, frame in zip(video.timestamps, video.frames, strict=True):
                     frame_key = f"{derived_prefix}/frames/{timestamp:06d}.jpg"
@@ -90,7 +100,12 @@ class LocalMediaProcessingService:
         except Exception:
             self._repository.upsert(
                 processing.model_copy(
-                    update={"status": "failed", "updated_at": self._clock.now_utc()}
+                    update={
+                        "status": "failed",
+                        "failure_code": "MEDIA_PROCESSING_FAILED",
+                        "failure_message": "The uploaded media could not be processed",
+                        "updated_at": self._clock.now_utc(),
+                    }
                 )
             )
             raise

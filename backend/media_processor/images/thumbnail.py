@@ -5,13 +5,15 @@ from dataclasses import dataclass
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
+from backend.common.media_limits import MAX_IMAGE_BYTES
+
 
 @dataclass(frozen=True, slots=True)
 class ThumbnailConfig:
     max_width: int = 320
     max_height: int = 320
     jpeg_quality: int = 80
-    max_input_bytes: int = 25 * 1024 * 1024
+    max_input_bytes: int = MAX_IMAGE_BYTES
     max_pixels: int = 40_000_000
 
     def __post_init__(self) -> None:
@@ -39,6 +41,10 @@ class ImageProcessingError(RuntimeError):
 class PillowThumbnailer:
     def __init__(self, config: ThumbnailConfig) -> None:
         self._config = config
+
+    @property
+    def max_input_bytes(self) -> int:
+        return self._config.max_input_bytes
 
     def create(self, source_bytes: bytes) -> ThumbnailResult:
         if not source_bytes or len(source_bytes) > self._config.max_input_bytes:

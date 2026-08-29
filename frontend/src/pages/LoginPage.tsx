@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
 import { useAuth } from "../auth/AuthContext";
 
@@ -51,9 +51,7 @@ export function LoginPage() {
           ))}
         </div>
         <div className="auth-divider"><span>New to the archive?</span></div>
-        <button type="button" className="secondary" onClick={() => void auth.signup().catch((cause: unknown) => {
-          setError(cause instanceof Error ? cause.message : "Registration could not start");
-        })}>Create an account</button>
+        <Link className="button secondary auth-link auth-link-secondary" to="/signup">Create an account</Link>
         {auth.config?.local_auth_enabled && (
           <button type="button" className="button-link local-login" onClick={() => void auth.localLogin().catch((cause: unknown) => {
             setError(cause instanceof Error ? cause.message : "Local authentication failed");

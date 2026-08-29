@@ -1,6 +1,8 @@
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import { useAuth } from "../auth/AuthContext";
+import { checksumFileInWorker } from "./checksum";
+import { maxBytesFor } from "./mediaLimits";
 
 export interface UploadReservationRequest {
   file_name: string;
@@ -21,12 +23,7 @@ export interface UploadReservationResponse {
 
 export interface UploadClient {
   reserve(request: UploadReservationRequest, accessToken: string): Promise<UploadReservationResponse>;
-}
-
-async function sha256For(file: File): Promise<string> {
-  const bytes = await file.arrayBuffer();
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, "0")).join("");
+  cancelReservation(mediaId: string, sha256: string, accessToken: string): Promise<{ status: "cancelled" | "already_cancelled" }>;
 }
 
 function mediaTypeFor(file: File): "image" | "video" | null {
@@ -45,16 +42,21 @@ function formatBytes(bytes: number): string {
 export function UploadPanel({
   client,
   refreshLibrary,
+  calculateChecksum = checksumFileInWorker,
 }: {
   client: UploadClient;
   refreshLibrary(): Promise<void>;
+  calculateChecksum?(file: File, signal?: AbortSignal): Promise<string>;
 }) {
   const auth = useAuth();
   const inputRef = useRef<HTMLInputElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   function clearSelection() {
     setFile(null);
@@ -76,17 +78,26 @@ export function UploadPanel({
       setError("Choose an image or video file.");
       return;
     }
+    if (file.size > maxBytesFor(mediaType)) {
+      setError(`${mediaType === "image" ? "Image" : "Video"} exceeds the ${formatBytes(maxBytesFor(mediaType))} upload limit.`);
+      return;
+    }
 
     setUploading(true);
     setError(null);
     setMessage(null);
+    const controller = new AbortController();
+    abortRef.current = controller;
+    let pendingReservation: { mediaId: string; sha256: string } | null = null;
     try {
+      const sha256 = await calculateChecksum(file, controller.signal);
+      if (controller.signal.aborted) throw new DOMException("Upload cancelled", "AbortError");
       const reservation = await client.reserve(
         {
           file_name: file.name,
           media_type: mediaType,
           size_bytes: file.size,
-          sha256: await sha256For(file),
+          sha256,
         },
         auth.accessToken,
       );
@@ -96,6 +107,7 @@ export function UploadPanel({
         clearSelection();
         return;
       }
+      pendingReservation = { mediaId: reservation.media_id, sha256 };
       if (!reservation.upload_url || !reservation.upload_headers) {
         throw new Error("Upload reservation did not include its signed transport contract.");
       }
@@ -103,16 +115,37 @@ export function UploadPanel({
         method: "PUT",
         headers: reservation.upload_headers,
         body: file,
+        signal: controller.signal,
       });
       if (!upload.ok) {
         throw new Error("Direct upload failed.");
       }
+      pendingReservation = null;
       await refreshLibrary();
       setMessage("Upload complete.");
       clearSelection();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Upload failed.");
+      let cancellationError: string | null = null;
+      if (pendingReservation && auth.accessToken) {
+        try {
+          await client.cancelReservation(
+            pendingReservation.mediaId,
+            pendingReservation.sha256,
+            auth.accessToken,
+          );
+        } catch (cancelCaught) {
+          cancellationError = cancelCaught instanceof Error
+            ? cancelCaught.message
+            : "The unused reservation could not be cancelled.";
+          await refreshLibrary().catch(() => undefined);
+        }
+      }
+      const failure = caught instanceof DOMException && caught.name === "AbortError"
+        ? "Upload cancelled."
+        : caught instanceof Error ? caught.message : "Upload failed.";
+      setError(cancellationError ? `${failure} ${cancellationError}` : failure);
     } finally {
+      abortRef.current = null;
       setUploading(false);
     }
   }
@@ -137,7 +170,15 @@ export function UploadPanel({
             type="file"
             accept=".jpg,.jpeg,.png,.mp4,.mov,image/jpeg,image/png,video/mp4,video/quicktime"
             onChange={(event) => {
-              setFile(event.target.files?.[0] ?? null);
+              const selected = event.target.files?.[0] ?? null;
+              const selectedType = selected ? mediaTypeFor(selected) : null;
+              if (selected && selectedType && selected.size > maxBytesFor(selectedType)) {
+                setFile(null);
+                setError(`${selectedType === "image" ? "Image" : "Video"} exceeds the ${formatBytes(maxBytesFor(selectedType))} upload limit.`);
+                event.target.value = "";
+                return;
+              }
+              setFile(selected);
               setError(null);
               setMessage(null);
             }}
@@ -150,7 +191,11 @@ export function UploadPanel({
               <strong>{file.name}</strong>
               <small>{`${formatBytes(file.size)} · ${mediaTypeFor(file) === "video" ? "Video" : "Image"}`}</small>
             </span>
-            <button type="button" className="button-link" onClick={clearSelection} disabled={uploading}>Remove</button>
+            <button
+              type="button"
+              className="button-link"
+              onClick={() => uploading ? abortRef.current?.abort() : clearSelection()}
+            >{uploading ? "Cancel upload" : "Remove"}</button>
           </div>
         )}
         <button type="submit" aria-label="Upload" disabled={uploading || !file}>{uploading ? "Preparing upload…" : "Upload to archive"}</button>

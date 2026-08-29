@@ -9,6 +9,8 @@ locals {
     local.google_enabled ? ["Google"] : [],
     local.microsoft_enabled ? ["Microsoft"] : [],
   )
+  api_cosmos_secret_arn          = var.enable_component_cosmos_identities ? aws_secretsmanager_secret.azure_api_identity.arn : aws_secretsmanager_secret.azure_worker_identity.arn
+  notification_cosmos_secret_arn = var.enable_component_cosmos_identities ? aws_secretsmanager_secret.azure_notification_identity.arn : aws_secretsmanager_secret.azure_worker_identity.arn
   tags = {
     Project     = var.project_name
     Environment = var.environment
@@ -214,6 +216,18 @@ resource "aws_secretsmanager_secret" "azure_worker_identity" {
   recovery_window_in_days = 7
 }
 
+resource "aws_secretsmanager_secret" "azure_api_identity" {
+  name                    = "${local.name}/azure-api-identity"
+  description             = "Human-managed least-privilege Azure credential used only by the API Lambda."
+  recovery_window_in_days = 7
+}
+
+resource "aws_secretsmanager_secret" "azure_notification_identity" {
+  name                    = "${local.name}/azure-notification-identity"
+  description             = "Human-managed least-privilege Azure credential used only by the notification bridge."
+  recovery_window_in_days = 7
+}
+
 resource "aws_ecr_repository" "media_worker" {
   name                 = "${local.name}-media-worker"
   image_tag_mutability = "MUTABLE"
@@ -310,7 +324,7 @@ data "aws_iam_policy_document" "api_lambda" {
   statement {
     sid       = "ReadCosmosCredentialSecret"
     actions   = ["secretsmanager:GetSecretValue"]
-    resources = [aws_secretsmanager_secret.azure_worker_identity.arn]
+    resources = [local.api_cosmos_secret_arn]
   }
 
   statement {
@@ -367,7 +381,7 @@ resource "aws_lambda_function" "api" {
       COSMOS_SUBSCRIPTIONS_CONTAINER       = var.worker_cosmos_subscriptions_container
       COSMOS_DELIVERY_LEDGER_CONTAINER     = var.worker_cosmos_delivery_ledger_container
       COSMOS_DELETION_OPERATIONS_CONTAINER = var.worker_cosmos_deletion_operations_container
-      AZURE_WORKER_SECRET_ARN              = aws_secretsmanager_secret.azure_worker_identity.arn
+      AZURE_COSMOS_SECRET_ARN              = local.api_cosmos_secret_arn
       MEDIA_WORKER_FUNCTION_NAME           = aws_lambda_function.media_worker.function_name
       CORS_ORIGINS                         = join(",", var.frontend_origins)
       EXTERNAL_PROVIDERS                   = join(",", concat(local.google_enabled ? ["Google"] : [], local.microsoft_enabled ? ["Microsoft"] : []))
@@ -403,7 +417,7 @@ data "aws_iam_policy_document" "notification_bridge" {
   statement {
     sid       = "ReadCosmosSecret"
     actions   = ["secretsmanager:GetSecretValue"]
-    resources = [aws_secretsmanager_secret.azure_worker_identity.arn]
+    resources = [local.notification_cosmos_secret_arn]
   }
   statement {
     sid       = "SnsTopicAccess"
@@ -439,7 +453,7 @@ resource "aws_lambda_function" "notification_bridge" {
   environment {
     variables = {
       NOTIFICATION_TOPIC               = aws_sns_topic.notifications.arn
-      AZURE_WORKER_SECRET_ARN          = aws_secretsmanager_secret.azure_worker_identity.arn
+      AZURE_COSMOS_SECRET_ARN          = local.notification_cosmos_secret_arn
       COSMOS_ENDPOINT                  = var.worker_cosmos_endpoint
       COSMOS_DATABASE                  = var.worker_cosmos_database
       COSMOS_SUBSCRIPTIONS_CONTAINER   = var.worker_cosmos_subscriptions_container
@@ -507,6 +521,7 @@ locals {
   public_routes = toset(["GET /health", "GET /auth/config"])
   protected_routes = toset([
     "POST /uploads/reservations",
+    "DELETE /uploads/reservations/{media_id}",
     "POST /queries/tags",
     "POST /queries/species",
     "POST /queries/thumbnail",
@@ -627,6 +642,11 @@ data "aws_iam_policy_document" "media_worker" {
     ]
   }
   statement {
+    sid       = "WorkerModelRead"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.media.arn}/models/*"]
+  }
+  statement {
     sid       = "WorkerListMediaBucket"
     actions   = ["s3:ListBucket"]
     resources = [aws_s3_bucket.media.arn]
@@ -689,6 +709,9 @@ resource "aws_lambda_function" "media_worker" {
       COSMOS_DATABASE         = var.worker_cosmos_database
       AZURE_WORKER_SECRET_ARN = aws_secretsmanager_secret.azure_worker_identity.arn
       ML_MODEL_DIR            = var.worker_ml_model_dir
+      MODEL_MANIFEST_URI      = var.worker_model_manifest_uri
+      MODEL_CACHE_DIR         = var.worker_model_cache_dir
+      MODEL_DEVICE            = "cpu"
     }
   }
 

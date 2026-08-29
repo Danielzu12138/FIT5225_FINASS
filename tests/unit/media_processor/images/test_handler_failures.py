@@ -82,6 +82,7 @@ def build_handler(
     metadata_checksum: str | None = None,
     content_type: str = "image/png",
     media_type: str = "image",
+    content_length: int | None = None,
 ):
     handler_module = importlib.import_module("backend.media_processor.images.handler")
     thumbnail_module = importlib.import_module("backend.media_processor.images.thumbnail")
@@ -107,6 +108,7 @@ def build_handler(
                 content_type=content_type,
                 metadata={"sha256": metadata_checksum or checksum},
                 version_id="v1",
+                content_length=content_length,
             )
         ),
         reservations=reservations,
@@ -168,3 +170,25 @@ def test_corrupt_supported_image_has_stable_failed_status() -> None:
     assert publisher.events == []
     assert handler.handle(event(key)) == ["duplicate"]
     assert reservations.released_tokens == []
+
+
+@pytest.mark.parametrize(
+    ("content_length", "expected_code"),
+    [
+        (25 * 1024 * 1024 + 1, "IMAGE_SIZE_INVALID"),
+        (999, "IMAGE_CONTENT_LENGTH_MISMATCH"),
+    ],
+)
+def test_s3_content_length_is_checked_before_image_processing(
+    content_length: int,
+    expected_code: str,
+) -> None:
+    handler, key, _, storage, reservations, _ = build_handler(
+        b"small-payload",
+        content_length=content_length,
+    )
+
+    assert handler.handle(event(key)) == ["failed"]
+    assert reservations.failure is not None
+    assert reservations.failure[0] == expected_code
+    assert storage.exists(key)

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import worker_adapter
-from backend.common.contracts.models import TaggingCompletedEvent
+from backend.common.contracts.models import MediaRecord, TaggingCompletedEvent
+from backend.tagging.inference.manifest import LoadedModelBundle
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -70,6 +72,56 @@ def test_model_check_forces_runtime_loading(monkeypatch) -> None:
     assert inference.loaded is True
 
 
+def test_manifest_configuration_is_used_by_production_worker(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("MODEL_MANIFEST_URI", "s3://media/models/releases/2.0.0/manifest.json")
+    monkeypatch.setenv("MODEL_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv("MODEL_DEVICE", "cpu")
+    artifact = tmp_path / "artifact"
+    artifact.write_bytes(b"model")
+    bundle = LoadedModelBundle(
+        model_version="2.0.0",
+        detector_path=artifact,
+        classifier_path=artifact,
+        labels_path=artifact,
+        labels=("Dingo",),
+        input_width=480,
+        input_height=480,
+        detection_threshold=0.1,
+        classification_threshold=0.5,
+        device="cpu",
+    )
+    captured: dict[str, object] = {}
+    service = object()
+
+    def configured_bundle(loader, environ):
+        captured["loader"] = loader
+        captured["environ"] = environ
+        return bundle
+
+    def from_bundle(*, storage, bundle):
+        captured["storage"] = storage
+        captured["bundle"] = bundle
+        return service
+
+    monkeypatch.setattr(worker_adapter, "load_configured_bundle", configured_bundle)
+    monkeypatch.setattr(
+        worker_adapter.LocalWildlifeInferenceService,
+        "from_manifest_bundle",
+        staticmethod(from_bundle),
+    )
+    storage = object()
+
+    result = worker_adapter._build_inference(storage, object())
+
+    assert result is service
+    assert captured["bundle"] is bundle
+    assert captured["storage"] is storage
+    assert captured["environ"] == {
+        "MODEL_MANIFEST_URI": "s3://media/models/releases/2.0.0/manifest.json",
+        "MODEL_DEVICE": "cpu",
+    }
+
+
 def test_worker_event_publisher_routes_completion_to_eventbridge() -> None:
     class Sqs:
         def send_message(self, **kwargs: object) -> None:
@@ -98,3 +150,44 @@ def test_worker_event_publisher_routes_completion_to_eventbridge() -> None:
     assert events.entries[0]["EventBusName"] == "application-events"
     assert events.entries[0]["DetailType"] == "TaggingCompleted"
     assert json.loads(str(events.entries[0]["Detail"]))["owner_sub"] == "owner"
+
+
+def test_reservation_adapter_persists_failure_diagnostics() -> None:
+    media_id = UUID("22222222-2222-4222-8222-222222222222")
+    now = datetime(2026, 8, 28, tzinfo=UTC)
+    record = MediaRecord(
+        media_id=media_id,
+        owner_sub="owner",
+        sha256="a" * 64,
+        file_name="camera.jpg",
+        media_type="image",
+        original_storage_uri="s3://media/originals/camera.jpg",
+        thumbnail_storage_uri=None,
+        tag_counts={},
+        manual_tags=[],
+        model_version="pending",
+        status="processing",
+        created_at=now,
+        updated_at=now,
+    )
+
+    class Repository:
+        saved: MediaRecord | None = None
+
+        def get_by_id_any_owner(self, requested_id: UUID) -> MediaRecord | None:
+            return record if requested_id == media_id else None
+
+        def upsert(self, value: MediaRecord) -> None:
+            self.saved = value
+
+    repository = Repository()
+    worker_adapter.ReservationAdapter(repository).mark_failed(
+        media_id,
+        "IMAGE_CORRUPT",
+        "Image could not be decoded",
+    )
+
+    assert repository.saved is not None
+    assert repository.saved.status == "failed"
+    assert repository.saved.failure_code == "IMAGE_CORRUPT"
+    assert repository.saved.failure_message == "Image could not be decoded"

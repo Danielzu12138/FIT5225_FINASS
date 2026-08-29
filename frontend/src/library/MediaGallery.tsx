@@ -11,6 +11,8 @@ export interface MediaResult {
   thumbnail_url: string | null;
   tag_counts: Record<string, number>;
   manual_tags?: string[];
+  failure_code?: string | null;
+  failure_message?: string | null;
 }
 
 export interface MediaLibraryClient {
@@ -55,7 +57,7 @@ export function MediaGallery({
       const response = await client.list(auth.accessToken);
       setResults(response.results);
       const pending = response.results.some((item) =>
-        item.status === "reserved" || item.status === "uploaded" || item.status === "processing",
+        item.status === "reserved" || item.status === "uploaded" || item.status === "processing" || item.status === "prepared",
       );
       if (pending && pollTimer.current === undefined) {
         pollTimer.current = window.setInterval(() => void loadMedia(), 5000);
@@ -140,7 +142,9 @@ export function MediaGallery({
               {filtered.map((media) => (
                 <li className="media-card" key={media.media_id}>
                   <div className="media-preview">
-                    {!media.original_url ? (
+                    {media.status === "failed" ? (
+                      <span className="preview-placeholder preview-failed" aria-label={`Media processing failed ${media.media_id}`}>Processing failed</span>
+                    ) : !media.original_url ? (
                       <span className="preview-placeholder" aria-label={`Media unavailable ${media.media_id}`}>Preview is being prepared</span>
                     ) : media.media_type === "image" ? (
                       <a href={media.original_url} target="_blank" rel="noreferrer" aria-label="Open image original">
@@ -168,7 +172,13 @@ export function MediaGallery({
                         {Object.entries(media.tag_counts).map(([tag, count]) => <span className="tag-chip" key={`detected-${tag}`}>{`${tag} × ${count}`}</span>)}
                         {(media.manual_tags ?? []).map((tag) => <span className="tag-chip tag-chip-manual" key={`manual-${tag}`}>{`${tag} · manual`}</span>)}
                       </div>
-                    ) : <span className="tag-empty">No tags yet</span>}
+                    ) : <span className="tag-empty">{media.status === "failed" ? "No tags were produced" : "No tags yet"}</span>}
+                    {media.status === "failed" && (
+                      <p className="media-failure">
+                        {media.failure_message ?? "Processing stopped before this media could be prepared."}
+                        {media.failure_code && <small>{media.failure_code}</small>}
+                      </p>
+                    )}
                     <button
                       type="button"
                       className="button-danger"

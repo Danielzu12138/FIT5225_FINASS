@@ -73,7 +73,7 @@ class ModelManifest:
     def validate(self) -> None:
         if self.schema_version != "1.0":
             raise ManifestValidationError("unsupported manifest schema version")
-        if re.fullmatch(r"0|[1-9]\d*\.(0|[1-9]\d*)\.(0|[1-9]\d*)", self.model_version) is None:
+        if re.fullmatch(r"(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)", self.model_version) is None:
             raise ManifestValidationError("model_version must be a semantic version")
         if isinstance(self.input_width, bool) or not isinstance(self.input_width, int) or self.input_width < 1:
             raise ManifestValidationError("input width must be a positive integer")

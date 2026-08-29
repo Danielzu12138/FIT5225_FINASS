@@ -20,6 +20,7 @@ import type {
   UploadReservationRequest,
   UploadReservationResponse,
 } from "../upload/UploadPanel";
+import { AUTHENTICATION_REQUIRED_EVENT } from "../auth/authClient";
 
 type ErrorPayload = {
   error?: { message?: unknown };
@@ -63,6 +64,15 @@ export class PlatformClient implements QueryClient, ManagementClient, Subscripti
     accessToken: string,
   ): Promise<UploadReservationResponse> {
     return this.json("/uploads/reservations", accessToken, "POST", payload);
+  }
+
+  cancelReservation(mediaId: string, sha256: string, accessToken: string): Promise<{ status: "cancelled" | "already_cancelled" }> {
+    return this.json(
+      `/uploads/reservations/${encodeURIComponent(mediaId)}`,
+      accessToken,
+      "DELETE",
+      { sha256 },
+    );
   }
 
   listMedia(accessToken: string): Promise<{ results: MediaResult[] }> {
@@ -150,6 +160,9 @@ export class PlatformClient implements QueryClient, ManagementClient, Subscripti
         payload = await response.json();
       } catch {
         // A non-JSON error still receives a useful HTTP status message.
+      }
+      if (response.status === 401 && typeof window !== "undefined") {
+        window.dispatchEvent(new Event(AUTHENTICATION_REQUIRED_EVENT));
       }
       throw new Error(errorMessage(payload, response.status));
     }

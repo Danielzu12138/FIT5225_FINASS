@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 from functools import lru_cache
 
@@ -11,6 +10,7 @@ from azure.cosmos import CosmosClient
 
 from backend.azure_api.operations.cosmos import CosmosDeliveryLedger
 from backend.azure_api.subscriptions.cosmos_repository import CosmosSubscriptionRepository
+from backend.common.azure_cosmos_credential import load_cosmos_credential
 from backend.common.contracts.models import TaggingCompletedEvent
 from backend.notification_bridge.evaluator import NotificationEvaluator
 from backend.notification_bridge.sns import SnsNotifier
@@ -18,24 +18,18 @@ from backend.notification_bridge.subscriptions import SnsEmailSubscriptionManage
 
 
 @lru_cache(maxsize=1)
-def _cosmos_key() -> str:
-    response = boto3.client("secretsmanager", region_name=os.environ.get("AWS_REGION")).get_secret_value(
-        SecretId=os.environ["AZURE_WORKER_SECRET_ARN"]
+def _cosmos_credential() -> object:
+    secret_arn = os.environ.get("AZURE_COSMOS_SECRET_ARN") or os.environ["AZURE_WORKER_SECRET_ARN"]
+    return load_cosmos_credential(
+        boto3.client("secretsmanager", region_name=os.environ.get("AWS_REGION")),
+        secret_arn,
     )
-    try:
-        payload = json.loads(response["SecretString"])
-        key = payload["cosmos_key"]
-    except (KeyError, TypeError, json.JSONDecodeError) as error:
-        raise RuntimeError("Cosmos credential secret is invalid") from error
-    if not isinstance(key, str) or not key:
-        raise RuntimeError("Cosmos credential secret is invalid")
-    return key
 
 
 @lru_cache(maxsize=1)
 def _evaluator() -> NotificationEvaluator:
     region = os.environ.get("AWS_REGION", "ap-southeast-2")
-    cosmos = CosmosClient(os.environ["COSMOS_ENDPOINT"], credential=_cosmos_key())
+    cosmos = CosmosClient(os.environ["COSMOS_ENDPOINT"], credential=_cosmos_credential())
     database = cosmos.get_database_client(os.environ.get("COSMOS_DATABASE", "bioarchive"))
     subscriptions = CosmosSubscriptionRepository(
         database.get_container_client(os.environ.get("COSMOS_SUBSCRIPTIONS_CONTAINER", "subscriptions"))

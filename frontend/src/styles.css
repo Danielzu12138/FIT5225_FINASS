@@ -138,7 +138,7 @@ form { display: grid; gap: 1rem; margin-top: 1.35rem; }
 fieldset { margin: 0; padding: 0; border: 0; }
 legend, label { color: var(--ink); font-size: 0.82rem; font-weight: 750; }
 label { display: grid; gap: 0.45rem; }
-input[type="text"], input[type="email"], input[type="url"], input[type="number"], input:not([type]) { width: 100%; min-height: 2.85rem; padding: 0.7rem 0.85rem; border: 1px solid #bdcbc0; border-radius: var(--radius-sm); color: var(--ink); background: white; }
+input[type="text"], input[type="email"], input[type="password"], input[type="url"], input[type="number"], input:not([type]) { width: 100%; min-height: 2.85rem; padding: 0.7rem 0.85rem; border: 1px solid #bdcbc0; border-radius: var(--radius-sm); color: var(--ink); background: white; }
 input[type="file"] { width: 100%; padding: 0.55rem; border: 1px dashed #94aa9c; border-radius: var(--radius-sm); color: var(--ink-soft); background: var(--sage-light); }
 input[type="file"]::file-selector-button { margin-right: 0.8rem; padding: 0.6rem 0.8rem; border: 0; border-radius: 0.5rem; color: white; background: var(--forest); font: inherit; font-size: 0.78rem; font-weight: 750; cursor: pointer; }
 input:focus { border-color: var(--forest); box-shadow: 0 0 0 0.22rem rgb(21 95 75 / 10%); outline: 0; }
@@ -251,6 +251,9 @@ button.secondary:hover:not(:disabled), .button-secondary:hover { background: var
 
 .media-thumbnail { display: block; width: 100%; height: 13rem; object-fit: cover; background: var(--sage); }
 .media-video-thumbnail { object-fit: cover; }
+.preview-failed { color: #7d2d29; background: #f7e6e3; }
+.media-failure { display: grid; gap: 0.25rem; margin: 0; color: #7d2d29; font-size: 0.72rem; line-height: 1.45; }
+.media-failure small { color: var(--ink-soft); font-size: 0.6rem; font-weight: 800; letter-spacing: 0.04em; }
 [role="dialog"] { position: fixed; inset: 50% auto auto 50%; z-index: 50; width: min(30rem, calc(100% - 2rem)); padding: 1.4rem; border: 1px solid var(--line); border-radius: var(--radius-lg); background: white; box-shadow: 0 2rem 6rem rgb(16 46 50 / 30%); transform: translate(-50%, -50%); }
 [role="dialog"]::before { position: fixed; inset: -100vh -100vw; z-index: -1; content: ""; background: rgb(7 28 29 / 55%); }
 .modal-backdrop { position: fixed; inset: 0; z-index: 49; display: grid; place-items: center; padding: 1rem; background: rgb(7 28 29 / 55%); }
@@ -297,6 +300,12 @@ button.secondary:hover:not(:disabled), .button-secondary:hover { background: var
 .state-icon-loading { animation: spin 1.2s linear infinite; }
 .auth-link { display: inline-flex; align-items: center; justify-content: center; color: white; text-decoration: none; }
 .auth-link:hover { color: white; }
+.auth-link-secondary { color: var(--navy); }
+.auth-link-secondary:hover { color: var(--navy); }
+.registration-card { width: min(36rem, 100%); }
+.auth-form { display: grid; width: 100%; gap: 0.85rem; text-align: left; }
+.auth-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.85rem; }
+.auth-form > small { margin-top: -0.5rem; color: var(--ink-soft); font-size: 0.68rem; line-height: 1.4; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .app-footer { display: flex; justify-content: space-between; gap: 1rem; width: min(76rem, calc(100% - 2rem)); margin: 0 auto; padding: 1.5rem 0 2.5rem; border-top: 1px solid var(--line); color: var(--ink-soft); font-size: 0.75rem; }
@@ -328,6 +337,7 @@ button.secondary:hover:not(:disabled), .button-secondary:hover { background: var
   .button-quiet { padding-inline: 0.6rem; }
   .workflow-summary { grid-template-columns: 1fr; }
   .workflow-summary span { display: flex; justify-items: initial; }
+  .auth-form-row { grid-template-columns: 1fr; }
 }
 
 @media (prefers-reduced-motion: reduce) {

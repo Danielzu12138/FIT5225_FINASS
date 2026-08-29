@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { BrowserAuthClient, buildAuthorizeUrl, buildLogoutUrl, buildSignupUrl, validateCallback } from "../src/auth/authClient";
+import {
+  BrowserAuthClient,
+  buildAuthorizeUrl,
+  buildLogoutUrl,
+  buildSignupUrl,
+  validateCallback,
+} from "../src/auth/authClient";
 
 const config = {
   region: "ap-southeast-2",
@@ -73,5 +79,79 @@ describe("Cognito hosted UI PKCE", () => {
     const refreshRequest = fetchMock.mock.calls[1][1] as RequestInit;
     expect(refreshRequest.body?.toString()).toContain("grant_type=refresh_token");
     expect(refreshRequest.body?.toString()).toContain("refresh_token=refresh-only-in-storage");
+  });
+
+  it("registers email and name attributes through Cognito's public SignUp API", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        UserConfirmed: false,
+        CodeDeliveryDetails: { Destination: "z***@example.com" },
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new BrowserAuthClient(config, sessionStorage);
+
+    await expect(client.signUp({
+      email: " Researcher@Example.com ",
+      password: "SecurePassword!2",
+      givenName: " Ada ",
+      familyName: " Lovelace ",
+    })).resolves.toEqual({ userConfirmed: false, destination: "z***@example.com" });
+
+    const [url, request] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://cognito-idp.ap-southeast-2.amazonaws.com/");
+    expect((request.headers as Record<string, string>)["X-Amz-Target"]).toContain(".SignUp");
+    expect(JSON.parse(request.body as string)).toEqual({
+      ClientId: "client-id",
+      Username: "researcher@example.com",
+      Password: "SecurePassword!2",
+      UserAttributes: [
+        { Name: "email", Value: "researcher@example.com" },
+        { Name: "given_name", Value: "Ada" },
+        { Name: "family_name", Value: "Lovelace" },
+      ],
+    });
+  });
+
+  it("confirms and resends codes for an unfinished registration", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({}) })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ CodeDeliveryDetails: { Destination: "z***@example.com" } }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new BrowserAuthClient(config, sessionStorage);
+
+    await client.confirmSignUp(" Researcher@Example.com ", " 123456 ");
+    await expect(client.resendConfirmationCode("Researcher@Example.com")).resolves.toBe("z***@example.com");
+
+    expect((fetchMock.mock.calls[0][1].headers as Record<string, string>)["X-Amz-Target"]).toContain(".ConfirmSignUp");
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toMatchObject({
+      Username: "researcher@example.com",
+      ConfirmationCode: "123456",
+    });
+    expect((fetchMock.mock.calls[1][1].headers as Record<string, string>)["X-Amz-Target"]).toContain(".ResendConfirmationCode");
+  });
+
+  it("turns Cognito error types into actionable stable errors", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: false,
+      json: async () => ({ __type: "com.amazon.cognito#UsernameExistsException", message: "raw message" }),
+    }));
+    const client = new BrowserAuthClient(config, sessionStorage);
+
+    const request = client.signUp({
+      email: "researcher@example.com",
+      password: "SecurePassword!2",
+      givenName: "Ada",
+      familyName: "Lovelace",
+    });
+    await expect(request).rejects.toMatchObject({
+      code: "UsernameExistsException",
+      message: expect.stringContaining("Confirm it"),
+    });
   });
 });
