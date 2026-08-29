@@ -6,7 +6,6 @@ import { MediaThumbnail } from "./MediaThumbnail";
 
 export interface MediaResult {
   media_id: string;
-  file_name?: string | null;
   media_type: "image" | "video";
   status: "reserved" | "uploaded" | "processing" | "prepared" | "ready" | "deleting" | "failed";
   original_url: string | null;
@@ -42,7 +41,6 @@ function displaySpecies(value: string): string {
 
 function fileName(media: MediaResult, localPreview?: LocalMediaPreview): string {
   if (localPreview?.file_name) return localPreview.file_name;
-  if (media.file_name) return media.file_name;
   if (media.original_url) {
     try {
       const path = new URL(media.original_url).pathname;
@@ -108,7 +106,7 @@ export function MediaGallery({
   const [confirmingBulkDelete, setConfirmingBulkDelete] = useState(false);
   const pollTimer = useRef<number | undefined>(undefined);
 
-  const loadMedia = useCallback(async (background = false) => {
+  const loadMedia = useCallback(async () => {
     if (!auth.accessToken) {
       setResults(null);
       setLoading(false);
@@ -116,8 +114,8 @@ export function MediaGallery({
       setMessage(null);
       return;
     }
-    if (!background) setLoading(true);
-    if (!background) setError(null);
+    setLoading(true);
+    setError(null);
     try {
       const response = await client.list(auth.accessToken);
       setResults(response.results);
@@ -125,16 +123,16 @@ export function MediaGallery({
       setSelected((current) => new Set([...current].filter((id) => response.results.some((item) => item.media_id === id))));
       const pending = response.results.some((item) => PROCESSING_STATUSES.has(item.status));
       if (pending && pollTimer.current === undefined) {
-        pollTimer.current = window.setInterval(() => void loadMedia(true), 5000);
+        pollTimer.current = window.setInterval(() => void loadMedia(), 5000);
       } else if (!pending && pollTimer.current !== undefined) {
         window.clearInterval(pollTimer.current);
         pollTimer.current = undefined;
       }
     } catch (caught) {
-      if (!background) setResults(null);
-      if (!background) setError(caught instanceof Error ? caught.message : "Media library is unavailable.");
+      setResults(null);
+      setError(caught instanceof Error ? caught.message : "Media library is unavailable.");
     } finally {
-      if (!background) setLoading(false);
+      setLoading(false);
     }
   }, [auth.accessToken, client, onResultsChange]);
 
