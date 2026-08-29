@@ -13,8 +13,9 @@ from backend.common.auth.models import AuthContext
 from backend.common.errors.models import ApiError
 
 
-BUSINESS_ROUTES = (
+COMPOSED_BUSINESS_ROUTES = (
     ("post", "/uploads/reservations"),
+    ("delete", "/uploads/reservations/11111111-1111-4111-8111-111111111111"),
     ("post", "/queries/tags"),
     ("post", "/queries/species"),
     ("post", "/queries/thumbnail"),
@@ -22,6 +23,25 @@ BUSINESS_ROUTES = (
     ("post", "/media/tags"),
     ("delete", "/media"),
     ("post", "/subscriptions"),
+)
+
+ALL_BUSINESS_ROUTES = (
+    ("post", "/uploads/reservations"),
+    ("delete", "/uploads/reservations/11111111-1111-4111-8111-111111111111"),
+    ("post", "/queries/tags"),
+    ("post", "/queries/species"),
+    ("post", "/queries/thumbnail"),
+    ("post", "/queries/by-file"),
+    ("get", "/media"),
+    ("post", "/media/tags"),
+    ("delete", "/media"),
+    ("delete", "/media/11111111-1111-4111-8111-111111111111"),
+    ("get", "/subscriptions"),
+    ("post", "/subscriptions"),
+    ("put", "/subscriptions/11111111-1111-4111-8111-111111111111"),
+    ("delete", "/subscriptions/11111111-1111-4111-8111-111111111111"),
+    ("get", "/profile"),
+    ("put", "/profile"),
 )
 
 
@@ -136,7 +156,7 @@ def test_every_business_route_is_protected_and_composed() -> None:
     client = TestClient(app_module().create_app(config))
     auth_header = {"Authorization": f"Bearer {local_token(config)}"}
 
-    for method, route in BUSINESS_ROUTES:
+    for method, route in COMPOSED_BUSINESS_ROUTES:
         unauthenticated = client.request(method, route)
         assert unauthenticated.status_code == 401, route
 
@@ -145,6 +165,16 @@ def test_every_business_route_is_protected_and_composed() -> None:
         if authenticated.headers.get("content-type", "").startswith("application/json"):
             payload = authenticated.json()
             assert payload.get("error", {}).get("code") != "NOT_IMPLEMENTED_IN_THIS_MODULE", route
+
+
+@pytest.mark.parametrize(("method", "route"), ALL_BUSINESS_ROUTES)
+def test_every_exposed_business_route_rejects_anonymous_requests(method: str, route: str) -> None:
+    client = TestClient(app_module().create_app(settings()))
+
+    response = client.request(method, route)
+
+    assert response.status_code == 401, route
+    assert response.json()["error"]["code"] == "AUTH_HEADER_MISSING", route
 
 
 def test_malformed_authorization_header_is_rejected() -> None:

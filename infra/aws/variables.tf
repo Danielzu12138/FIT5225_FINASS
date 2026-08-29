@@ -24,6 +24,12 @@ variable "aws_region" {
   default = "ap-southeast-2"
 }
 
+variable "enable_component_cosmos_identities" {
+  description = "Use distinct Secrets Manager credentials for the API and notification bridge after their Entra service principals and Cosmos RBAC assignments are ready."
+  type        = bool
+  default     = false
+}
+
 variable "frontend_callback_urls" {
   type    = list(string)
   default = ["http://localhost:5173/auth/callback"]
@@ -180,6 +186,28 @@ variable "worker_ml_model_dir" {
   description = "Mounted Lambda layer path containing mdv5a.pt, model.pt and labels.txt."
   type        = string
   default     = "/opt/pba-model"
+}
+
+variable "worker_model_manifest_uri" {
+  description = "Optional S3 URI for the versioned model manifest. When set, the worker validates and caches manifest artifacts instead of using the image fallback."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.worker_model_manifest_uri == "" || can(regex("^s3://[^/]+/models/.+\\.json$", var.worker_model_manifest_uri))
+    error_message = "worker_model_manifest_uri must be empty or an s3:// URI under the models/ prefix ending in .json."
+  }
+}
+
+variable "worker_model_cache_dir" {
+  description = "Writable Lambda cache directory for manifest model artifacts."
+  type        = string
+  default     = "/tmp/pba-model-cache"
+
+  validation {
+    condition     = startswith(var.worker_model_cache_dir, "/tmp/")
+    error_message = "worker_model_cache_dir must be under Lambda's writable /tmp directory."
+  }
 }
 
 variable "azure_data_api_base_url" {

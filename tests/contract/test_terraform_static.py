@@ -101,12 +101,36 @@ def test_aws_environment_and_cors_match_application_runtime_values() -> None:
     assert 'allow_methods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]' in main
 
 
-def test_task5_protects_the_composed_media_list_route() -> None:
+def test_api_gateway_exposes_only_minimal_public_routes_and_protects_every_business_route() -> None:
     main = (ROOT / "infra" / "aws" / "main.tf").read_text(encoding="utf-8")
 
+    public_routes = re.search(r'public_routes\s*=\s*toset\(\[(.*?)\]\)', main, re.DOTALL)
     protected_routes = re.search(r'protected_routes\s*=\s*toset\(\[(.*?)\]\)', main, re.DOTALL)
+    assert public_routes is not None
     assert protected_routes is not None
-    assert '"GET /media"' in protected_routes.group(1)
+    assert set(re.findall(r'"([A-Z]+ [^\"]+)"', public_routes.group(1))) == {
+        "GET /health",
+        "GET /auth/config",
+    }
+    expected_protected = {
+        "POST /uploads/reservations",
+        "DELETE /uploads/reservations/{media_id}",
+        "POST /queries/tags",
+        "POST /queries/species",
+        "POST /queries/thumbnail",
+        "POST /queries/by-file",
+        "POST /media/tags",
+        "GET /media",
+        "DELETE /media",
+        "DELETE /media/{media_id}",
+        "GET /subscriptions",
+        "POST /subscriptions",
+        "PUT /subscriptions/{subscription_id}",
+        "DELETE /subscriptions/{subscription_id}",
+        "GET /profile",
+        "PUT /profile",
+    }
+    assert set(re.findall(r'"([A-Z]+ [^\"]+)"', protected_routes.group(1))) == expected_protected
 
 
 def test_temporary_query_objects_are_available_to_api_and_worker() -> None:
@@ -133,6 +157,25 @@ def test_existing_cognito_pool_schema_is_not_modified() -> None:
     user_pool = re.search(r'resource\s+"aws_cognito_user_pool"\s+"main"\s*\{(.*?)\n\}', main, re.DOTALL)
     assert user_pool is not None
     assert "ignore_changes = [schema]" in user_pool.group(1)
+
+
+def test_external_identity_providers_are_real_opt_in_cognito_integrations() -> None:
+    main = (ROOT / "infra" / "aws" / "main.tf").read_text(encoding="utf-8")
+    variables = (ROOT / "infra" / "aws" / "variables.tf").read_text(encoding="utf-8")
+
+    assert 'provider_type = "Google"' in main
+    assert 'provider_name = "Google"' in main
+    assert 'provider_type = "OIDC"' in main
+    assert 'provider_name = "Microsoft"' in main
+    for attribute in ("email", "given_name", "family_name"):
+        assert re.search(rf"{attribute}\s*=\s*\"{attribute}\"", main)
+    assert re.search(r'allowed_oauth_flows\s*=\s*\["code"\]', main)
+    assert "supported_identity_providers         = local.identity_providers" in main
+    assert 'EXTERNAL_PROVIDERS                   = join(",", concat(local.google_enabled' in main
+    for variable in ("enable_google_provider", "enable_microsoft_provider"):
+        block = re.search(rf'variable\s+"{variable}"\s*\{{(.*?)\n\}}', variables, re.DOTALL)
+        assert block is not None
+        assert "default = false" in block.group(1)
 
 
 def test_obsolete_lambda_stub_is_rejected() -> None:

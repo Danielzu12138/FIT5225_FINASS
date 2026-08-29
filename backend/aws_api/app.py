@@ -42,8 +42,16 @@ from backend.azure_api.subscriptions.repository import InMemorySubscriptionRepos
 from backend.common.auth.dependencies import require_auth
 from backend.common.auth.jwt import CognitoJwtVerifier, HttpJwksProvider, LocalJwtVerifier
 from backend.common.auth.models import AuthContext, TokenVerifier
+from backend.common.azure_cosmos_credential import load_cosmos_credential
 from backend.common.config.settings import AppSettings
 from backend.common.errors.models import ApiError
+from backend.common.media_limits import (
+    MAX_IMAGE_BYTES,
+    MAX_VIDEO_BYTES,
+    MAX_VIDEO_DURATION_SECONDS,
+    MAX_VIDEO_FRAMES,
+    VIDEO_PROCESSING_TIMEOUT_SECONDS,
+)
 from backend.common.providers.fakes import FixedClock, InMemoryObjectStorage, RecordingNotifier
 from backend.media_processor.images.thumbnail import PillowThumbnailer, ThumbnailConfig
 from backend.media_processor.videos import FfmpegVideoBackend
@@ -55,6 +63,17 @@ from backend.temporary_query.service import TemporaryQueryService
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 LOCAL_BUCKET = "pba-local-media"
 LOCAL_TIME = datetime(2026, 8, 24, 12, 0, tzinfo=UTC)
+
+
+def _video_limits() -> VideoLimits:
+    return VideoLimits(
+        max_input_bytes=MAX_VIDEO_BYTES,
+        max_duration_seconds=MAX_VIDEO_DURATION_SECONDS,
+        max_frames=MAX_VIDEO_FRAMES,
+        timeout_seconds=VIDEO_PROCESSING_TIMEOUT_SECONDS,
+        supported_containers=("mp4", "mov"),
+        supported_codecs=("h264", "hevc"),
+    )
 
 
 def load_error_schema() -> dict[str, Any]:
@@ -224,18 +243,11 @@ def build_local_dependencies(settings: AppSettings, verifier: TokenVerifier) -> 
         inference=inference,
         video_processor=VideoProcessor(
             FfmpegVideoBackend(),
-            VideoLimits(
-                max_input_bytes=5_368_709_120,
-                max_duration_seconds=3600,
-                max_frames=3600,
-                timeout_seconds=30,
-                supported_containers=("mp4", "mov"),
-                supported_codecs=("h264", "hevc"),
-            ),
+            _video_limits(),
         ),
         signer=signer,
         bucket_name=LOCAL_BUCKET,
-        max_bytes=25 * 1024 * 1024,
+        max_bytes=MAX_IMAGE_BYTES,
     )
     processing = LocalMediaProcessingService(
         bucket_name=LOCAL_BUCKET,
@@ -244,14 +256,7 @@ def build_local_dependencies(settings: AppSettings, verifier: TokenVerifier) -> 
         thumbnailer=PillowThumbnailer(ThumbnailConfig()),
         video_processor=VideoProcessor(
             FfmpegVideoBackend(),
-            VideoLimits(
-                max_input_bytes=5_368_709_120,
-                max_duration_seconds=3600,
-                max_frames=3600,
-                timeout_seconds=30,
-                supported_containers=("mp4", "mov"),
-                supported_codecs=("h264", "hevc"),
-            ),
+            _video_limits(),
         ),
         clock=clock,
         inference=(inference if settings.local_ml_model_dir is not None else None),
@@ -259,11 +264,12 @@ def build_local_dependencies(settings: AppSettings, verifier: TokenVerifier) -> 
     return ApplicationDependencies(
         upload_service=UploadReservationService(
             repository=repository,
+            storage=storage,
             url_signer=signer,
             clock=clock,
             ids=ids,
             bucket_name=LOCAL_BUCKET,
-            max_size_bytes=5_368_709_120,
+            max_size_bytes=MAX_VIDEO_BYTES,
         ),
         media_service=MediaLibraryService(repository=repository, url_signer=signer),
         query_dependencies=create_query_dependencies(gateway=gateway, temporary_service=temporary_service),
@@ -284,18 +290,12 @@ def build_runtime_dependencies(settings: AppSettings, verifier: TokenVerifier) -
     s3 = boto3.client("s3", region_name=settings.aws_region)
     storage = S3Storage(s3, bucket)
     signer = S3ObjectUrlSigner(client=s3, bucket_name=bucket)
-    secret_arn = os.environ["AZURE_WORKER_SECRET_ARN"]
-    secret_response = boto3.client("secretsmanager", region_name=settings.aws_region).get_secret_value(
-        SecretId=secret_arn
+    cosmos_secret_arn = os.environ.get("AZURE_COSMOS_SECRET_ARN") or os.environ["AZURE_WORKER_SECRET_ARN"]
+    cosmos_credential = load_cosmos_credential(
+        boto3.client("secretsmanager", region_name=settings.aws_region),
+        cosmos_secret_arn,
     )
-    try:
-        secret_payload = json.loads(secret_response["SecretString"])
-        cosmos_key = secret_payload["cosmos_key"]
-    except (KeyError, TypeError, json.JSONDecodeError) as error:
-        raise RuntimeError("Cosmos credential secret is invalid") from error
-    if not isinstance(cosmos_key, str) or not cosmos_key:
-        raise RuntimeError("Cosmos credential secret is invalid")
-    cosmos = CosmosClient(os.environ["COSMOS_ENDPOINT"], credential=cosmos_key)
+    cosmos = CosmosClient(os.environ["COSMOS_ENDPOINT"], credential=cosmos_credential)
     database = cosmos.get_database_client(os.environ.get("COSMOS_DATABASE", "bioarchive"))
     repository = CosmosPagedMediaRepository(
         database.get_container_client(os.environ.get("COSMOS_MEDIA_CONTAINER", "media"))
@@ -322,7 +322,7 @@ def build_runtime_dependencies(settings: AppSettings, verifier: TokenVerifier) -
         ),
         signer=signer,
         bucket_name=bucket,
-        max_bytes=25 * 1024 * 1024,
+        max_bytes=MAX_IMAGE_BYTES,
         defer_video_processing=True,
     )
     features = build_sns_feature_dependencies(
@@ -348,11 +348,12 @@ def build_runtime_dependencies(settings: AppSettings, verifier: TokenVerifier) -
     return ApplicationDependencies(
         upload_service=UploadReservationService(
             repository=repository,
+            storage=storage,
             url_signer=signer,
             clock=clock,
             ids=ids,
             bucket_name=bucket,
-            max_size_bytes=5_368_709_120,
+            max_size_bytes=MAX_VIDEO_BYTES,
         ),
         media_service=MediaLibraryService(repository=repository, url_signer=signer),
         query_dependencies=create_query_dependencies(

@@ -26,6 +26,14 @@ output "azure_worker_identity_secret_arn" {
   value = aws_secretsmanager_secret.azure_worker_identity.arn
 }
 
+output "azure_api_identity_secret_arn" {
+  value = aws_secretsmanager_secret.azure_api_identity.arn
+}
+
+output "azure_notification_identity_secret_arn" {
+  value = aws_secretsmanager_secret.azure_notification_identity.arn
+}
+
 output "notification_topic_arn" {
   value = aws_sns_topic.notifications.arn
 }

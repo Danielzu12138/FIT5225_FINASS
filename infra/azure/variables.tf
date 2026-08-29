@@ -71,6 +71,30 @@ variable "worker_principal_id" {
   }
 }
 
+variable "api_principal_id" {
+  description = "Optional Azure service-principal object ID used only by the AWS API Lambda."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.api_principal_id == null || can(regex("^[0-9a-fA-F-]{36}$", var.api_principal_id))
+    error_message = "api_principal_id must be an Azure service-principal object ID."
+  }
+}
+
+variable "notification_principal_id" {
+  description = "Optional Azure service-principal object ID used only by the AWS notification bridge."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.notification_principal_id == null || can(regex("^[0-9a-fA-F-]{36}$", var.notification_principal_id))
+    error_message = "notification_principal_id must be an Azure service-principal object ID."
+  }
+}
+
 variable "log_retention_days" {
   type    = number
   default = 30

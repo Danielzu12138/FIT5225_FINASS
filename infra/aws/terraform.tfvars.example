@@ -13,6 +13,10 @@ azure_data_api_base_url = "https://replace-function-app.azurewebsites.net"
 # worker_enabled         = true
 # worker_cosmos_endpoint = "https://<account>.documents.azure.com:443/"
 # worker_image_uri       = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/pacific-bioarchive-development-media-worker@sha256:replace"
+# worker_model_manifest_uri = "s3://<media-bucket>/models/releases/1.0.0/manifest.json"
+# Enable only after the two new component secrets contain service-principal
+# credentials and Azure Cosmos RBAC assignments have been verified.
+# enable_component_cosmos_identities = true
 
 # Supply optional provider credentials only through environment variables:
 # Set enable_google_provider or enable_microsoft_provider to true only after registration.
