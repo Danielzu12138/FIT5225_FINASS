@@ -81,6 +81,7 @@ test("renders image previews, video links, and request errors", async () => {
       {
         media_id: "image-1",
         media_type: "image",
+        status: "ready",
         original_url: "https://signed.example.test/original.jpg",
         thumbnail_url: "https://signed.example.test/thumbnail.jpg",
         tag_counts: { dingo: 2 },
@@ -89,6 +90,7 @@ test("renders image previews, video links, and request errors", async () => {
       {
         media_id: "video-1",
         media_type: "video",
+        status: "ready",
         original_url: "https://signed.example.test/video.mp4",
         thumbnail_url: null,
         tag_counts: { wombat: 1 },
@@ -103,23 +105,61 @@ test("renders image previews, video links, and request errors", async () => {
 
   fireEvent.change(screen.getByLabelText("Species 1"), { target: { value: "dingo" } });
   fireEvent.click(screen.getByRole("button", { name: "Search" }));
-  expect(await screen.findByAltText("Matching wildlife image")).toHaveAttribute(
+  expect(await screen.findByAltText("original.jpg thumbnail")).toHaveAttribute(
     "src",
     response.results[0].thumbnail_url,
   );
-  expect(screen.getByRole("link", { name: "Open full-size image" })).toHaveAttribute(
+  expect(screen.getByRole("link", { name: "View original original.jpg" })).toHaveAttribute(
     "href",
     response.results[0].original_url,
   );
-  expect(screen.getByRole("link", { name: "Open video" })).toHaveAttribute(
-    "href",
-    response.results[1].original_url,
-  );
+  expect(screen.getAllByRole("link", { name: "View original" }).some((link) =>
+    link.getAttribute("href") === response.results[1].original_url,
+  )).toBe(true);
   expect(screen.getByRole("status")).toHaveTextContent("2 matches");
   expect(screen.getByText("dingo × 2")).toBeInTheDocument();
-  expect(screen.getByText("night · manual")).toBeInTheDocument();
+  expect(screen.getByText("night")).toBeInTheDocument();
   expect(screen.getByText("wombat × 1")).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: "Search" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("Query service unavailable");
+});
+
+test("uses the original as a processing thumbnail and renders a consistent failed placeholder", async () => {
+  const search = vi.fn().mockResolvedValue({
+    results: [
+      {
+        media_id: "processing-image",
+        media_type: "image",
+        status: "processing",
+        original_url: "https://signed.example.test/Casuarius_casuarius.JPG",
+        thumbnail_url: null,
+        tag_counts: {},
+      },
+      {
+        media_id: "failed-image",
+        media_type: "image",
+        status: "failed",
+        original_url: null,
+        thumbnail_url: null,
+        tag_counts: {},
+        failure_code: "TAGGING_INPUT_INVALID",
+        failure_message: "Internal path /tmp/model-cache must stay hidden until expanded.",
+      },
+    ],
+  });
+  renderPanel(search);
+
+  fireEvent.change(screen.getByLabelText("Species 1"), { target: { value: "cassowary" } });
+  fireEvent.click(screen.getByRole("button", { name: "Search" }));
+
+  expect(await screen.findByAltText("Casuarius_casuarius.JPG thumbnail")).toHaveAttribute(
+    "src",
+    "https://signed.example.test/Casuarius_casuarius.JPG",
+  );
+  expect(screen.getByText("Processing")).toBeInTheDocument();
+  expect(screen.getByLabelText("Preview unavailable failed-image")).toBeInTheDocument();
+  expect(screen.getByText("Species detection failed.")).toBeInTheDocument();
+  expect(screen.getByText("TAGGING_INPUT_INVALID")).toBeInTheDocument();
+  expect(screen.getByText("View technical details")).toBeInTheDocument();
 });

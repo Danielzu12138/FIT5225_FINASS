@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useAuth } from "../auth/AuthContext";
 import { PlatformClient } from "../api/platformClient";
-import { MediaGallery } from "../library/MediaGallery";
+import { MediaGallery, type LocalMediaPreview, type MediaResult } from "../library/MediaGallery";
 import { ManagementPanel } from "../manage/ManagementPanel";
 import { QueryPanel } from "../query/QueryPanel";
 import { SubscriptionPanel } from "../subscriptions/SubscriptionPanel";
@@ -15,15 +15,38 @@ const uploadClient = {
 };
 const mediaClient = {
   list: platformClient.listMedia.bind(platformClient),
+  updateTags: platformClient.updateTags.bind(platformClient),
+  deleteMedia: (urls: string[], accessToken: string) => platformClient.deleteMedia(urls, accessToken),
   deleteMediaById: platformClient.deleteMediaById.bind(platformClient),
 };
 
 export function LibraryPage() {
   const auth = useAuth();
   const [libraryVersion, setLibraryVersion] = useState(0);
+  const [libraryItems, setLibraryItems] = useState<MediaResult[]>([]);
+  const [localPreviews, setLocalPreviews] = useState<Record<string, LocalMediaPreview>>({});
+  const previewUrls = useRef<Set<string>>(new Set());
+
+  useEffect(() => () => {
+    previewUrls.current.forEach((url) => URL.revokeObjectURL(url));
+    previewUrls.current.clear();
+  }, []);
 
   async function refreshLibrary() {
     setLibraryVersion((current) => current + 1);
+  }
+
+  function rememberLocalPreview(mediaId: string, file: File) {
+    const url = URL.createObjectURL(file);
+    previewUrls.current.add(url);
+    setLocalPreviews((current) => {
+      const previous = current[mediaId]?.url;
+      if (previous) {
+        URL.revokeObjectURL(previous);
+        previewUrls.current.delete(previous);
+      }
+      return { ...current, [mediaId]: { file_name: file.name, url } };
+    });
   }
 
   return (
@@ -65,7 +88,7 @@ export function LibraryPage() {
 
         <div className="workspace-grid">
           <section id="upload" className="workspace-card workspace-card-compact">
-            <UploadPanel client={uploadClient} refreshLibrary={refreshLibrary} />
+            <UploadPanel client={uploadClient} refreshLibrary={refreshLibrary} onUploadAccepted={rememberLocalPreview} />
           </section>
           <aside className="workspace-card field-notes" aria-labelledby="field-notes-heading">
             <div>
@@ -80,13 +103,13 @@ export function LibraryPage() {
             </ol>
           </aside>
           <section id="library" className="workspace-card workspace-card-wide">
-            <MediaGallery client={mediaClient} refreshVersion={libraryVersion} />
+            <MediaGallery client={mediaClient} refreshVersion={libraryVersion} localPreviews={localPreviews} onResultsChange={setLibraryItems} />
           </section>
           <section id="search" className="workspace-card workspace-card-wide">
             <QueryPanel client={platformClient} />
           </section>
           <section id="manage" className="workspace-card">
-            <ManagementPanel client={platformClient} />
+            <ManagementPanel client={platformClient} libraryItems={libraryItems} onLibraryChanged={refreshLibrary} />
           </section>
           <section id="subscriptions" className="workspace-card">
             <SubscriptionPanel client={platformClient} />

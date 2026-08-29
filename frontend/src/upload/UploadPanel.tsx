@@ -42,10 +42,12 @@ function formatBytes(bytes: number): string {
 export function UploadPanel({
   client,
   refreshLibrary,
+  onUploadAccepted,
   calculateChecksum = checksumFileInWorker,
 }: {
   client: UploadClient;
   refreshLibrary(): Promise<void>;
+  onUploadAccepted?(mediaId: string, file: File): void;
   calculateChecksum?(file: File, signal?: AbortSignal): Promise<string>;
 }) {
   const auth = useAuth();
@@ -121,6 +123,7 @@ export function UploadPanel({
         throw new Error("Direct upload failed.");
       }
       pendingReservation = null;
+      onUploadAccepted?.(reservation.media_id, file);
       await refreshLibrary();
       setMessage("Upload complete.");
       clearSelection();

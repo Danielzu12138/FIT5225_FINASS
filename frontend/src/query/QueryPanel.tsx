@@ -1,16 +1,21 @@
 import { useState, type FormEvent } from "react";
 
 import { useAuth } from "../auth/AuthContext";
+import { MediaThumbnail } from "../library/MediaThumbnail";
+import type { MediaResult } from "../library/MediaGallery";
 
 export type QueryMode = "tags" | "species" | "thumbnail";
 
 export interface QueryResult {
   media_id: string;
   media_type: "image" | "video";
-  original_url: string;
+  status: MediaResult["status"];
+  original_url: string | null;
   thumbnail_url: string | null;
   tag_counts: Record<string, number>;
   manual_tags?: string[];
+  failure_code?: string | null;
+  failure_message?: string | null;
 }
 
 export interface QueryResponse {
@@ -28,6 +33,46 @@ export interface QueryClient {
 interface TagRow {
   species: string;
   count: string;
+}
+
+function displaySpecies(value: string): string {
+  return value.replaceAll("_", " ");
+}
+
+function resultName(result: QueryResult): string {
+  if (result.original_url) {
+    try {
+      const path = new URL(result.original_url).pathname;
+      const name = decodeURIComponent(path.split("/").at(-1) ?? "");
+      if (name) return name;
+    } catch {
+      // Keep the query results usable if a malformed signed URL is returned.
+    }
+  }
+  return `${result.media_type === "image" ? "Image" : "Video"} ${result.media_id.slice(0, 8)}`;
+}
+
+function statusLabel(status: QueryResult["status"]): string {
+  if (status === "ready") return "Ready";
+  if (status === "failed") return "Failed";
+  if (status === "prepared") return "Detecting species";
+  if (status === "deleting") return "Deleting";
+  return "Processing";
+}
+
+function statusDescription(status: QueryResult["status"]): string {
+  if (status === "ready") return "Analysis complete";
+  if (status === "prepared") return "Detecting species";
+  if (status === "failed") return "Processing failed";
+  if (status === "deleting") return "Deletion in progress";
+  return "Preparing preview";
+}
+
+function failureSummary(code?: string | null): string {
+  if (code?.startsWith("TAGGING_")) return "Species detection failed.";
+  if (code?.startsWith("IMAGE_")) return "Image processing failed.";
+  if (code?.startsWith("VIDEO_")) return "Video processing failed.";
+  return "Media processing failed.";
 }
 
 export function QueryPanel({ client }: { client: QueryClient }) {
@@ -188,29 +233,38 @@ export function QueryPanel({ client }: { client: QueryClient }) {
         <div className="query-results">
           <p className="result-summary" role="status">{`${results.length} ${results.length === 1 ? "match" : "matches"} found`}</p>
           <ul className="media-grid" aria-label="Query results">
-            {results.map((result) => (
-              <li className="media-card" key={result.media_id}>
-                <div className="media-preview">
-                  {result.media_type === "image" && result.thumbnail_url ? (
-                    <a href={result.original_url} target="_blank" rel="noreferrer" aria-label="Open full-size image">
-                      <img className="media-thumbnail" src={result.thumbnail_url} alt="Matching wildlife image" />
-                    </a>
-                  ) : (
-                    <a href={result.original_url} target="_blank" rel="noreferrer" aria-label="Open video">
-                      {result.thumbnail_url ? <video className="media-thumbnail" poster={result.thumbnail_url} muted preload="metadata" /> : <span className="preview-placeholder">Open video</span>}
-                      <span className="play-indicator" aria-hidden="true">▶</span>
-                    </a>
-                  )}
-                </div>
-                <div className="media-card-body">
-                  <div className="media-card-title"><strong>{result.media_type === "image" ? "Matching image" : "Matching video"}</strong><span>{result.media_id.slice(0, 8)}</span></div>
-                  <div className="tag-list">
-                    {Object.entries(result.tag_counts).map(([tag, count]) => <span className="tag-chip" key={`detected-${tag}`}>{`${tag} × ${count}`}</span>)}
-                    {(result.manual_tags ?? []).map((tag) => <span className="tag-chip tag-chip-manual" key={`manual-${tag}`}>{`${tag} · manual`}</span>)}
+            {results.map((result) => {
+              const name = resultName(result);
+              return (
+                <li className={`media-card media-card-${result.status}`} key={result.media_id}>
+                  <div className="media-preview">
+                    <MediaThumbnail media={result} name={name} />
+                    <span className={`status-chip status-${result.status}`}>{statusLabel(result.status)}</span>
                   </div>
-                </div>
-              </li>
-            ))}
+                  <div className="media-card-body">
+                    <div className="media-card-title"><strong title={name}>{name}</strong><span>{`ID: ${result.media_id.slice(0, 8)}`}</span></div>
+                    <p className={`media-status-copy media-status-${result.status}`}>{statusDescription(result.status)}</p>
+                    <div className="media-tags">
+                      <div>
+                        <span className="tag-group-label">Detected species</span>
+                        {Object.keys(result.tag_counts).length > 0 ? <div className="tag-list">{Object.entries(result.tag_counts).map(([tag, count]) => <span className="tag-chip" key={`detected-${tag}`}>{`${displaySpecies(tag)} × ${count}`}</span>)}</div> : <span className="tag-empty">None detected yet</span>}
+                      </div>
+                      {(result.manual_tags ?? []).length > 0 && <div><span className="tag-group-label">Manual tags</span><div className="tag-list">{(result.manual_tags ?? []).map((tag) => <span className="tag-chip tag-chip-manual" key={`manual-${tag}`}>{displaySpecies(tag)}</span>)}</div></div>}
+                    </div>
+                    {result.status === "failed" && (
+                      <div className="media-failure-summary">
+                        <strong>{failureSummary(result.failure_code)}</strong>
+                        {result.failure_code && <code>{result.failure_code}</code>}
+                        {result.failure_message && <details><summary>View technical details</summary><p>{result.failure_message}</p></details>}
+                      </div>
+                    )}
+                    <div className="media-card-actions">
+                      {result.original_url && <a className="button button-secondary" href={result.original_url} target="_blank" rel="noreferrer">View original</a>}
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}
