@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 
 import { AuthContext, type AuthContextValue } from "../../src/auth/AuthContext";
@@ -91,9 +91,10 @@ test("renders consistent previews, filenames, readable species and status filter
 test("keeps failed details collapsed and uses a calm summary with the error code", async () => {
   const failed: MediaResult = {
     media_id: "failed-1",
+    file_name: "failed-field-image.jpg",
     media_type: "image",
     status: "failed",
-    original_url: "https://downloads.example.test/originals/failed.jpg",
+    original_url: null,
     thumbnail_url: null,
     tag_counts: {},
     failure_code: "TAGGING_INPUT_INVALID",
@@ -104,7 +105,8 @@ test("keeps failed details collapsed and uses a calm summary with the error code
   });
   renderGallery(client([failed], { deleteMediaById }));
 
-  expect(await screen.findByAltText("failed.jpg thumbnail")).toHaveAttribute("src", failed.original_url);
+  expect(await screen.findByText("failed-field-image.jpg")).toBeInTheDocument();
+  expect(screen.getByLabelText("Preview unavailable failed-1")).toBeInTheDocument();
   expect(screen.getByText("Species detection failed.")).toBeInTheDocument();
   expect(screen.getByText("TAGGING_INPUT_INVALID")).toBeInTheDocument();
   const details = screen.getByText("View technical details").closest("details");
@@ -166,7 +168,11 @@ test("supports bulk tag editing and deletion with per-item outcomes", async () =
 });
 
 test("keeps polling while media is prepared", async () => {
-  const interval = vi.spyOn(window, "setInterval");
+  let poll: (() => void) | undefined;
+  const interval = vi.spyOn(window, "setInterval").mockImplementation((handler) => {
+    poll = handler as () => void;
+    return 123;
+  });
   const prepared: MediaResult = {
     media_id: "prepared-1",
     media_type: "image",
@@ -175,10 +181,15 @@ test("keeps polling while media is prepared", async () => {
     thumbnail_url: "https://downloads.example.test/prepared-thumb.jpg",
     tag_counts: {},
   };
-  renderGallery(client([prepared]));
+  const list = vi.fn()
+    .mockResolvedValueOnce({ results: [prepared] })
+    .mockImplementationOnce(() => new Promise(() => undefined));
+  renderGallery(client([prepared], { list }));
 
   await screen.findByText("prepared.jpg");
   expect(interval).toHaveBeenCalled();
+  act(() => poll?.());
+  expect(screen.queryByText("Updating library…")).not.toBeInTheDocument();
   interval.mockRestore();
 });
 
